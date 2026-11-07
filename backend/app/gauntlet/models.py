@@ -30,6 +30,7 @@ class QuestEvent(BaseModel):
     credits: int | None = None
     status: str | None = None
     verdict: str | None = None
+    encounter: dict[str, Any] | None = None  # the structured record of one fight (spec section 12)
     line: str | None = None      # what happened, with the numbers
     explain: str | None = None   # the same, in plain English
 
@@ -55,6 +56,8 @@ class Hero(BaseModel):
     revised: bool = False
     prereg_hash: str | None = None
     results: dict[str, dict[str, Any]] = Field(default_factory=dict)
+    encounter_ids: dict[str, str] = Field(default_factory=dict)  # test -> encounter id, for citations
+    hp_by_level: dict[int, int] = Field(default_factory=dict)
     history: list[dict[str, Any]] = Field(default_factory=list)
 
     @property

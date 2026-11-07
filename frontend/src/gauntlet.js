@@ -30,6 +30,9 @@ const vis = {};       // hero id -> { x, y, tx, ty, flash, shake, alpha, dead, g
 let foe = null;       // { kind, head, x, y, alpha, ta, flash, lunge, dying }
 let particles = [], floaters = [];
 let frame = 0;
+let reduced = matchMedia("(prefers-reduced-motion: reduce)").matches;
+let allEvents = [];   // everything received, so Replay can start over
+let currentQuest = null;  // the live quest id, so Replay can fetch its ledger again
 
 const FIGHT = { hx: 204, ex: 268, y: 150 };
 
@@ -49,7 +52,8 @@ function home(id) { const v = ensureVis(id); const s = slotOf(v.slot); v.tx = s.
 
 function step() {
   frame++;
-  scene.cam += Math.sign(scene.camTarget - scene.cam) * Math.min(1.5, Math.abs(scene.camTarget - scene.cam));
+  scene.cam += reduced ? scene.camTarget - scene.cam
+    : Math.sign(scene.camTarget - scene.cam) * Math.min(1.5, Math.abs(scene.camTarget - scene.cam));
   for (const v of Object.values(vis)) {
     const sp = 1.6 * Math.min(speed, 3);
     v.x += Math.sign(v.tx - v.x) * Math.min(sp, Math.abs(v.tx - v.x));
@@ -69,6 +73,7 @@ function step() {
 }
 
 function burst(x, y, color, n = 14, spread = 1.4) {
+  if (reduced) return;
   for (let i = 0; i < n; i++) {
     const a = Math.random() * Math.PI * 2, s = Math.random() * spread;
     particles.push({ x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s - 0.4, g: 0.04, life: 20 + Math.random() * 20, color });
@@ -111,7 +116,7 @@ function drawHeroes(cam) {
     if (v.alpha <= 0.02) continue;
     const moving = Math.abs(v.tx - v.x) > 0.5 || Math.abs(v.ty - v.y) > 0.5;
     const bob = moving ? (Math.floor(frame / 4) % 2) : 0;
-    const shake = v.shake ? (frame % 2 ? 1 : -1) : 0;
+    const shake = v.shake && !reduced ? (frame % 2 ? 1 : -1) : 0;
     const img = heroSprite(h.cls, v.skin);
     ctx.fillStyle = "rgba(0,0,0,0.35)"; ctx.fillRect(x - 5, y - 1, 10, 2);
     blit(ctx, v.flash && frame % 4 < 2 ? flashOf(`hero:${h.cls}:${v.skin}`, img) : img, x + shake, y - bob,
@@ -170,6 +175,7 @@ async function wait(ms) {
 }
 
 async function fadeTo(target, ms = 360) {
+  if (reduced) { scene.fade = target; await wait(ms / 3); return; }
   const from = scene.fade, steps = 6;
   for (let i = 1; i <= steps; i++) { scene.fade = from + (target - from) * (i / steps); await wait(ms / steps); }
 }
@@ -217,6 +223,11 @@ function heroMini(id, size = 32) {
   return c;
 }
 
+// the same sprite as an <img>, for HTML built as a string (a canvas's pixels don't survive outerHTML)
+function heroImg(id, size = 24) {
+  return `<img class="mini pixel" alt="" width="${size}" height="${size}" src="${heroMini(id).toDataURL()}" style="width:${size}px;height:${size}px">`;
+}
+
 function barClass(hp) { return hp > 60 ? "" : hp > 30 ? "mid" : "low"; }
 function verdictTag(v) {
   if (!v) return "";
@@ -247,12 +258,20 @@ function renderParty() {
   }
   for (const k in hitAt) delete hitAt[k];
   const all = state.order.map((id) => state.heroes[id]);
-  $("#hud-standing").textContent = `${all.filter((h) => h.status === "questing").length}/${all.length}`;
+  const standing = state.finale ? all.filter((h) => h.verdict === "VALIDATED").length
+                                                : all.filter((h) => h.status === "questing").length;
+  $("#hud-standing").textContent = `${standing}/${all.length}`;
+  $("#hud-standing").previousElementSibling.textContent = state.finale ? "Validated" : "Standing";
   $("#hud-checks").textContent = all.reduce((n, h) => n + h.passed + h.failed, 0);
   $("#hud-caught").textContent = all.reduce((n, h) => n + h.failed, 0);
 }
 
 function renderHud() {
+  for (const li of document.querySelectorAll("#progress li")) {
+    const l = Number(li.dataset.l);
+    li.className = l < state.level ? "done" : l === state.level ? "now" : "";
+  }
+  $("#demo-badge").hidden = !(state.sources && state.sources.synthetic);
   const L = state.levels[state.level] || state.levels[String(state.level)];
   if (!L) return;
   $("#hud-num").textContent = ROMAN[state.level] || "";
@@ -281,6 +300,7 @@ function renderCombat() {
   hp.className = enc.delta < 0 ? "dmg" : enc.delta > 0 ? "heal" : "";
   hp.textContent = enc.delta == null ? "…" : enc.delta === 0 ? "±0" : `${enc.delta > 0 ? "+" : ""}${enc.delta}`;
   $("#c-explain").textContent = enc.explain || "…";
+  $("#inspect").disabled = !state.records.some((r) => r.agent_id === enc.hero && r.enemy_type === enc.enemy);
 }
 
 function renderFeed() {
@@ -289,6 +309,7 @@ function renderFeed() {
     const d = f.delta ? ` <b class="${f.delta < 0 ? "fail" : "pass"}">${f.delta > 0 ? "+" : ""}${f.delta} HP</b>` : "";
     return `<li><span class="who ${f.actor}">L${f.level ?? "-"} ${ACTOR[f.actor] || f.actor}</span>${f.hero ? `<b>${esc(f.hero)}</b> ` : ""}${mark}${esc(f.line)}${d}</li>`;
   }).join("");
+  if (typeof ledgerOn !== "undefined" && ledgerOn) renderLedgerTable();   // keep the ledger view live
 }
 
 function renderAll() { renderHud(); renderParty(); renderCombat(); renderFeed(); }
@@ -325,91 +346,19 @@ function showRules() {
       A passed check restores <b>+${r ? r.pass_heal : 5} HP</b>. The Skeptic sends up to two optional challenges per level; the agent either pays to defend
       (the test runs) or concedes (<b>−${r ? r.concede_damage : 5} HP</b>, claim stays unverified). Statistics are computed by the backend engine, never by an LLM.</div>
     ${r ? `<table class="rules-table"><tr><th>Lvl</th><th>Enemy</th><th>When</th><th>Ability</th><th>Test executed</th><th>Credits</th><th>HP if failed</th></tr>${rows}</table>
-    <h3>Who wins</h3><div class="lesson">A claim is <b>VALIDATED</b> only if it passes the Preprint Mimic, the Chimera's overfitting test, the Publication Bias Knight,
-      the Chronolock Guardian, the Leakage Reaper and the Guardian of False Discoveries. The best researcher has the highest defensibility score:
-      HP left + ${r.score.level_cleared} per level cleared + ${r.score.check_passed} per check passed ${r.score.redundant} per redundant check
-      + ${r.score.credit_left} per unspent credit + ${r.score.validated} if validated. Running more tests does not win on its own.</div>` :
+    <h3>Who wins</h3><div class="lesson">Only a <b>VALIDATED</b> claim can be champion: it must pass the Preprint Mimic, the Chimera's overfitting test,
+      the Publication Bias Knight, the Chronolock Guardian, the Leakage Reaper and the Guardian of False Discoveries. Among those, the highest score wins
+      (ties go to the most confident gain on unseen people). If none is validated, the verdict is <b>Inconclusive</b>.</div>
+    ${scoreTableHtml(r.score_components, r.hp_bonus)}` :
       "<p>The rules load when a quest starts.</p>"}
+    ${glossaryHtml()}
     <form method="dialog" class="actions"><button class="btn gold">Close</button></form>`;
   d.showModal();
   d.scrollTop = 0; d.querySelector("h2").focus();
 }
 
-// ---------- level complete + finale ----------
-
+// Level complete, finale, ledger view, inspect and tutorial live in report-ui.js.
 let continueResolve = null;
-async function levelComplete(e) {
-  const L = e.result;
-  scene.portal = true;
-  foe = null;
-  for (const id of state.order) if (state.heroes[id].status === "questing") home(id);
-  banner("Level complete", "");
-  await wait(900);
-  banner(null);
-  const rows = state.order.map((id) => {
-    const h = state.heroes[id], b = h.byLevel[L.level];
-    if (!b) return "";
-    return `<tr><td>${heroMini(id, 24).outerHTML}${esc(h.name)} <small>${esc(h.cls)}</small></td>
-      <td><span class="bar ${barClass(h.hp)}"><i style="width:${h.hp}%"></i></span>${h.hp}</td>
-      <td>${b.spent}</td><td>${b.passed}</td><td>${b.failed}</td><td>${b.conceded}</td>
-      <td>${h.status === "questing" ? (L.level < 4 ? "Onward" : "Survived") : verdictTag(h.verdict || h.status.toUpperCase())}</td></tr>`;
-  }).join("");
-  const d = $("#level-done");
-  d.innerHTML = `<h2 tabindex="-1">Level complete</h2><p class="sub">${esc(L.name)} · ${L.cleared.length} of ${state.order.length} still standing</p>
-    <table><tr><th>Agent</th><th>HP left</th><th>Credits spent</th><th>Passed</th><th>Failed</th><th>Conceded</th><th>Status</th></tr>${rows}</table>
-    <div class="lesson"><b>Lesson:</b> ${esc(LESSONS[L.level] || "")}</div>
-    <form method="dialog" class="actions"><button class="btn gold" value="go">${L.level < 4 ? "Enter the portal" : "Emerge into the world"}</button></form>`;
-  d.showModal();
-  d.scrollTop = 0; d.querySelector("h2").focus();
-  await new Promise((r) => {
-    continueResolve = r;
-    d.addEventListener("close", r, { once: true });
-    if (skipping) { skipping = false; $("#skip").disabled = false; }
-    if (autoContinue) wait(9000).then(() => { if (d.open) d.close(); });
-  });
-  continueResolve = null;
-  for (const id of state.order) if (state.heroes[id].status === "questing") { const v = ensureVis(id); v.tx = 340; v.ty = 122; }
-  await wait(1400);
-  await fadeTo(1);
-  scene.portal = false;
-}
-
-async function finale(e) {
-  const F = e.result;
-  scene.mode = "overworld";
-  $("#hud-num").textContent = "✦";
-  $("#hud-name").textContent = "The Overworld";
-  $("#hud-evidence").textContent = `${F.validated} hypothes${F.validated === 1 ? "is" : "es"} emerged validated`;
-  for (const id of state.order) {
-    const v = ensureVis(id), h = state.heroes[id];
-    v.dead = false; v.ghost = false;
-    const ok = F.ranking.find((r) => r.id === id);
-    v.alpha = ok && ok.verdict === "VALIDATED" ? 1 : 0;
-    v.x = 30; v.y = 150; const rank = F.ranking.indexOf(ok);
-    v.tx = 90 + rank * 16; v.ty = 150;
-  }
-  await fadeTo(0);
-  await wait(1200);
-  const rank = F.ranking.map((r, i) => `<tr><td>${i + 1}</td><td>${heroMini(r.id, 24).outerHTML}${esc(r.name)} <small>${esc(r.cls)}</small></td>
-    <td>${esc(r.claim)}</td><td>${verdictTag(r.verdict)}</td><td>${r.hp}</td><td>${r.score}</td></tr>`).join("");
-  const decoys = F.decoys.map((d) => `<li><b>${esc(d.name)}</b> was secretly <i>${esc(d.decoy.replace(/_/g, " "))}</i>: ${d.caught ? '<span class="pass">caught</span>' : '<span class="fail">slipped through</span>'} (${esc(d.verdict)})</li>`).join("");
-  const t = F.totals;
-  const dlg = $("#finale");
-  dlg.innerHTML = `<h2 tabindex="-1">${F.validated ? "Out of the dungeon" : "The evidence is inconclusive"}</h2>
-    <p class="conclusion">${esc(F.conclusion)}</p>
-    <div class="totals"><div><b>${t.tests_attempted}</b><small>tests attempted</small></div><div><b>${t.credits_spent}</b><small>credits spent</small></div>
-      <div><b>${t.invalid_claims_detected}</b><small>weak claims detected</small></div><div><b>${t.useful_evidence}</b><small>checks passed</small></div>
-      <div><b>${t.redundant}</b><small>redundant checks</small></div><div><b>${F.caught}/${F.decoys.length}</b><small>impostors caught</small></div></div>
-    <h3>Final standings</h3>
-    <table><tr><th>#</th><th>Agent</th><th>Hypothesis</th><th>Verdict</th><th>HP</th><th>Score</th></tr>${rank}</table>
-    ${decoys ? `<h3>The impostors revealed</h3><ul>${decoys}</ul><div class="lesson">Impostors are hypotheses whose truth we planted:
-      pure noise, the luckiest of 100 noise columns, a copy of carbs, and a score built from the answer. Catching them shows the gauntlet can tell luck from discovery.</div>` : ""}
-    <form method="dialog" class="actions"><button class="btn gold" value="again">New quest</button><button class="btn" value="stay">Stay and inspect</button></form>`;
-  dlg.showModal();
-  dlg.scrollTop = 0; dlg.querySelector("h2").focus();
-}
-
-$("#finale").addEventListener("close", () => { if ($("#finale").returnValue === "again") location.href = location.pathname; });
 
 // ---------- playing one event ----------
 
@@ -584,11 +533,12 @@ async function pump() {
   playing = 0;
 }
 
-function enqueue(events) { queue.push(...events); pump(); }
+function enqueue(events) { allEvents.push(...events); queue.push(...events); pump(); }
 
 // ---------- sources: live backend, or a recorded ledger file ----------
 
 async function follow(questId) {
+  currentQuest = questId;
   let after = 0;
   for (;;) {
     const res = await fetch(`/api/quests/${questId}/events?after=${after}`);
@@ -624,6 +574,9 @@ function enterGame() {
   $("#screen-game").hidden = false;
   scene.fade = 1;
   requestAnimationFrame(loop);
+  // report-ui.js loads after this file, so wait for it when entering straight from the URL
+  if (typeof maybeTutorial === "function") maybeTutorial();
+  else addEventListener("DOMContentLoaded", () => maybeTutorial(), { once: true });
 }
 
 function clampParty(n) { return Math.max(1, Math.min(12, Math.round(Number(n)) || 1)); }
@@ -635,7 +588,8 @@ $("#begin").addEventListener("click", async () => {
   $("#begin").disabled = true;
   try {
     const res = await fetch("/api/quests", { method: "POST", headers: { "Content-Type": "application/json" },
-                                             body: JSON.stringify({ max_heroes: clampParty($("#party").value) }) });
+                                             body: JSON.stringify({ max_heroes: clampParty($("#party").value), question: $("#question").value,
+                                                                     theories: $("#theory").value.trim() ? [$("#theory").value.trim()] : [] }) });
     if (!res.ok) throw new Error(await res.text());
     const { quest_id } = await res.json();
     enterGame();
@@ -685,7 +639,8 @@ async function loadStatus() {
 }
 
 const params = new URLSearchParams(location.search);
-if (params.get("file") || params.has("demo")) { enterGame(); playFile(params.get("file") || "demo-quest.jsonl"); }
+if (params.get("quest")) { enterGame(); follow(params.get("quest")); }
+else if (params.get("file") || params.has("demo")) { enterGame(); playFile(params.get("file") || "demo-quest.jsonl"); }
 else { titleLoop(); loadStatus(); }
 if (params.has("fast")) document.querySelector('.speed[data-speed="4"]').click();
 $("#skip").addEventListener("click", () => { if (state.level >= 1 && state.level <= 4) { skipping = true; $("#skip").disabled = true; } });

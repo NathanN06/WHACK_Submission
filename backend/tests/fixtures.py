@@ -68,4 +68,5 @@ def make_quest_world(seed: int = 0, n_train: int = 36, n_test: int = 24):
 
     train = extend(make_meals(n_train, seed=seed), seed + 1)
     test = extend(make_meals(n_test, seed=seed + 50, prefix="B"), seed + 2)
+    train.attrs["synthetic"] = test.attrs["synthetic"] = True
     return train, test, make_sensor_pair(train)

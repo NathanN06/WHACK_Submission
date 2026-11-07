@@ -53,7 +53,7 @@ const GOOD = new Set(["VALIDATED"]);
 function initialState() {
   return { level: 0, levelName: "", levels: {}, heroes: {}, order: [], feed: [], encounter: null,
            skepticLine: "", levelSummaries: {}, finale: null, error: null, startingCredits: 18,
-           rules: null };
+           rules: null, question: "", sources: null, records: [] };
 }
 
 function hero(s, id) {
@@ -90,6 +90,8 @@ function reduce(s, e) {
   switch (e.action) {
     case "quest_start":
       s.rules = e.result || null;
+      s.question = (e.result && e.result.question) || "";
+      s.sources = (e.result && e.result.sources) || null;
       s.levels = (e.result && e.result.levels) || {};
       s.startingCredits = (e.result && e.result.starting_credits) || 18;
       break;
@@ -142,10 +144,12 @@ function reduce(s, e) {
       s.error = e.line;
       break;
   }
+  if (e.encounter) s.records.push({ ...e.encounter, hero: h ? h.name : null, enemy_name: (ENEMIES[e.encounter.enemy_type] || {}).name,
+                                    line: e.line });
   if (e.line) s.feed.unshift({ seq: e.seq, level: e.level, actor: e.actor, action: e.action, line: e.line,
                                hero: h ? h.name : null, passed: e.passed == null ? null : e.passed,
                                delta: e.hp_delta == null ? null : e.hp_delta });
-  if (s.feed.length > 300) s.feed.length = 300;
+  if (s.feed.length > 600) s.feed.length = 600;
   return s;
 }
 

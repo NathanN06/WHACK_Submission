@@ -319,19 +319,44 @@ function mapCitadel(ctx, x, y, lit, f) {
   if (lit) { rect(ctx, x - 1, y - 36, 2, 2, (f % 20) < 10 ? "#ffe08a" : "#d08aff"); rect(ctx, x - 2, y - 10, 4, 10, "#e8b847"); }
 }
 
+// The real world: a bright morning city with a research institute, a park and the portal home.
 function drawOverworld(ctx, f) {
-  const sky = ["#3a6aa8", "#5a8ac8", "#7aaad8", "#a8c8e0", "#e8d6a0"];
-  sky.forEach((c, i) => rect(ctx, 0, i * 23, VIEW_W, 24, c));
-  disc(ctx, 260, 36, 12, "#ffe08a"); disc(ctx, 260, 36, 9, "#fff2b0");
-  for (let i = 0; i < 3; i++) { const x = ((f * 0.2 + i * 120) % 380) - 40; ellipse(ctx, x, 24 + i * 12, 14, 3, "#f3f3ff"); }
-  for (let x = 0; x < VIEW_W; x++) { const h = 14 + Math.round(Math.sin(x / 30) * 6 + Math.sin(x / 11) * 2);
-    rect(ctx, x, FLOOR_Y - h, 1, h, "#4a7a4a"); rect(ctx, x, FLOOR_Y - h, 1, 1, "#6a9a5a"); }
-  rect(ctx, 0, FLOOR_Y, VIEW_W, VIEW_H - FLOOR_Y, "#5a9a4a");
-  const r = rng(3);
-  for (let i = 0; i < 120; i++) rect(ctx, r() * VIEW_W, FLOOR_Y + r() * 68, 1, 2, r() < 0.5 ? "#4a8a3a" : "#7aba5a");
-  for (let i = 0; i < 14; i++) { const x = r() * VIEW_W, y = FLOOR_Y + 6 + r() * 60;
-    rect(ctx, x, y, 2, 2, ["#ff6b8a", "#ffe066", "#f3f3ff"][i % 3]); }
-  portal(ctx, 30, FLOOR_Y - 8, f, "#d08aff");
+  const sky = ["#5a9ae0", "#78b2ec", "#9ccaf2", "#c4e0f6", "#f4e6c4"];
+  sky.forEach((c, i) => rect(ctx, 0, i * 16, VIEW_W, 17, c));
+  disc(ctx, 64, 30, 11, "#fff2b0"); disc(ctx, 64, 30, 8, "#ffffff");
+  for (let i = 0; i < 3; i++) { const x = ((f * 0.15 + i * 130) % 400) - 40; ellipse(ctx, x, 18 + i * 10, 13, 3, "#ffffff"); }
+  // far skyline
+  const r = rng(21);
+  for (let x = 0; x < VIEW_W;) {
+    const w = 10 + Math.floor(r() * 14), h = 22 + Math.floor(r() * 30);
+    rect(ctx, x, 86 - h, w, h, "#8aa8c8");
+    for (let wy = 86 - h + 3; wy < 82; wy += 5) for (let wx = x + 2; wx < x + w - 2; wx += 4) rect(ctx, wx, wy, 2, 2, "#b8d0e8");
+    x += w + 2;
+  }
+  // the research institute: columns, dome, banner
+  const bx = 170;
+  rect(ctx, bx, 50, 110, 40, "#f3ecdc"); rect(ctx, bx, 50, 110, 3, "#d8cbb0");
+  for (let i = 0; i < 7; i++) rect(ctx, bx + 8 + i * 15, 56, 5, 30, "#e0d4ba");
+  for (let k = 0; k < 8; k++) rect(ctx, bx + 10 + k * 3, 50 - k * 1.2, 90 - k * 6, 2, "#e8dcc4");
+  disc(ctx, bx + 55, 34, 13, "#7fb0c8"); rect(ctx, bx + 42, 34, 27, 14, "#f3ecdc");
+  disc(ctx, bx + 55, 34, 10, "#a8d0e0"); rect(ctx, bx + 54, 20, 2, 5, "#e8b847");
+  rect(ctx, bx + 30, 60, 50, 7, "#3b2559"); // banner over the door
+  for (let i = 0; i < 12; i++) rect(ctx, bx + 33 + i * 4, 62 + (i % 2), 2, 2, "#e8b847");
+  rect(ctx, bx + 48, 72, 14, 18, "#6b4a2b"); rect(ctx, bx + 54, 72, 2, 18, "#4a3220");
+  for (let i = 0; i < 6; i++) rect(ctx, bx + 6 + (i > 2 ? 64 : 0) + (i % 3) * 12, 72, 7, 8, (f + i * 9) % 80 < 60 ? "#ffe9a0" : "#d8c890");
+  // lawn, path, trees, flowers
+  rect(ctx, 0, 90, VIEW_W, VIEW_H - 90, "#6fb85a");
+  const g = rng(3);
+  for (let i = 0; i < 140; i++) rect(ctx, g() * VIEW_W, 92 + g() * 86, 1, 2, g() < 0.5 ? "#5ea84a" : "#8ad06a");
+  for (let y = 90; y < VIEW_H; y++) { const w = 10 + (y - 90) * 0.5; rect(ctx, bx + 55 - w / 2, y, w, 1, "#e8d6a8"); }
+  for (const [tx, ty] of [[20, 100], [140, 96], [300, 104], [110, 120]]) {
+    rect(ctx, tx, ty, 3, 10, "#7a5230"); disc(ctx, tx + 1, ty - 4, 7, "#3f8a3a"); disc(ctx, tx - 1, ty - 6, 4, "#5aa84a");
+  }
+  for (let i = 0; i < 18; i++) rect(ctx, g() * VIEW_W, 110 + g() * 66, 2, 2, ["#ff6b8a", "#ffe066", "#ffffff", "#9a7aff"][i % 4]);
+  // birds
+  for (let i = 0; i < 3; i++) { const x = (f * 0.5 + i * 90) % 360 - 20, y = 40 + i * 6 + Math.round(Math.sin(f / 6 + i));
+    rect(ctx, x, y, 2, 1, "#2a2a3a"); rect(ctx, x + 3, y, 2, 1, "#2a2a3a"); rect(ctx, x + 2, y + (f % 10 < 5 ? 1 : -1), 1, 1, "#2a2a3a"); }
+  portal(ctx, 34, 140, f, "#d08aff");
 }
 
 if (typeof module !== "undefined") module.exports = { MAP_NODES, LEVEL_PAL, WORLD_W, VIEW_W, VIEW_H, FLOOR_Y };

@@ -3,7 +3,7 @@ import pytest
 from app.arena.features import default_registry
 from app.arena.ledger import Ledger
 from app.arena.models import Gladiator
-from app.gauntlet import checks, rules
+from app.gauntlet import checks, report, rules
 from app.gauntlet.campaign import Gauntlet
 from app.gauntlet.models import QuestEvent
 from tests.fixtures import make_meals, make_quest_world
@@ -90,7 +90,50 @@ def test_inconclusive_when_nothing_survives(tmp_path):
     roster = [{"claim": "Protein matters", "add_features": ["protein"]}]
     result = Gauntlet("q", train, make_meals(12, seed=5, prefix="B"), {}, ledger=ledger, hypotheses=roster,
                       with_decoys=False, n_perm=20, n_boot=50).run()
-    assert result["validated"] == 0 and "inconclusive" in result["conclusion"]
+    assert result["validated"] == 0 and result["conclusion"].startswith("Inconclusive")
+    assert result["champion"] is None and result["best"] is None
+    assert result["consensus"]["survived"] is False and result["consensus"]["citations"] == []
+
+
+def test_every_encounter_is_recorded_with_the_spec_fields(quest):
+    _, _, events = quest
+    fields = {"encounter_id", "level", "agent_id", "hypothesis_id", "evidence_source", "evidence_version",
+              "enemy_type", "research_action", "test_requested", "numerical_result", "methodological_verdict",
+              "hp_change", "explanation", "timestamp"}
+    records = [e.encounter for e in events if e.encounter]
+    assert records and all(fields <= set(r) for r in records)
+    assert len({r["encounter_id"] for r in records}) == len(records)
+    for e in events:
+        if e.encounter:  # the record matches the event it rides on
+            assert e.encounter["hp_change"] == e.hp_delta and e.encounter["agent_id"] == e.agent_id
+
+
+def test_champion_is_the_top_validated_hero_by_the_predefined_rule(quest):
+    g, result, _ = quest
+    ranking = result["ranking"]
+    validated = [r for r in ranking if r["verdict"] == "VALIDATED"]
+    assert result["champion"]["id"] == validated[0]["id"]
+    assert ranking[: len(validated)] == validated  # no unvalidated hero outranks a validated one
+    for a, b in zip(validated, validated[1:]):
+        assert (a["score"], report.tiebreak(g.heroes[a["id"]])) >= (b["score"], report.tiebreak(g.heroes[b["id"]]))
+    # every cited encounter exists in the ledger
+    ids = {e.encounter["encounter_id"] for e in quest[2] if e.encounter}
+    assert result["consensus"]["survived"] and set(result["consensus"]["citations"]) <= ids
+
+
+def test_leaked_evidence_earns_no_validity_or_out_of_sample_points(quest):
+    g, result, _ = quest
+    walk = by_feature(g, result)["steps_after"]
+    comp = walk["components"]
+    assert comp["validity"] == comp["out_of_sample"] == comp["falsification"] == comp["uncertainty"] == 0
+    assert walk["score"] < result["champion"]["score"]
+
+
+def test_score_components_never_exceed_their_maximum(quest):
+    _, result, _ = quest
+    for r in result["ranking"]:
+        for k, v in r["components"].items():
+            assert 0 <= v <= rules.SCORE_COMPONENTS[k]["max"]
 
 
 # ---------- the checks ----------

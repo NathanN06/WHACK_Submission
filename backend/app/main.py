@@ -155,6 +155,8 @@ def test_theory(req: TheoryRequest):
 
 
 class QuestRequest(BaseModel):
+    question: str = Field(quest_rules.DEFAULT_QUESTION, max_length=200)
+    theories: list[str] = Field(default_factory=list, max_length=3)  # your own hypotheses, in words
     hypotheses: list[RosterEntry] | None = Field(None, max_length=20)
     max_heroes: int = Field(8, ge=1, le=16)
     decoys: bool = True
@@ -171,6 +173,17 @@ def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
         time.sleep(pace)
 
 
+def quest_sources(train, test) -> dict:
+    """Names for the evidence on screen. Real data unless the frames say they are synthetic."""
+    synthetic = bool(getattr(train, "attrs", {}).get("synthetic"))
+    n_tr = train["participant_id"].nunique()
+    n_te = 0 if test is None else test["participant_id"].nunique()
+    if synthetic:
+        return {"discovery": f"synthetic meals ({n_tr} people)", "holdout": f"synthetic holdout ({n_te} people)",
+                "synthetic": True}
+    return {"discovery": f"CGMacros ({n_tr} people)", "holdout": f"BUT CGM ({n_te} people)", "synthetic": False}
+
+
 @app.post("/api/quests")
 def start_quest(req: QuestRequest):
     quest_id = _new_id("q")
@@ -185,6 +198,8 @@ def start_quest(req: QuestRequest):
         researcher, skeptic = make_roles(_use_llm(req.llm))
         chosen = None if req.hypotheses is None else [e.model_dump() for e in req.hypotheses[: req.max_heroes]]
         quest = Gauntlet(quest_id, train, test, sensors, researcher, skeptic, ledger, hypotheses=chosen,
+                         question=req.question, theories=[t[:140] for t in req.theories],
+                         sources=quest_sources(train, test),
                          with_decoys=req.decoys, max_heroes=req.max_heroes, seed=req.seed,
                          n_perm=req.n_perm, pace=req.pace)
         thread = threading.Thread(target=quest.run, daemon=True)
@@ -216,7 +231,7 @@ def quest_events(quest_id: str, after: int = 0):
 def quest_rulebook():
     """Every HP, credit and score rule, so the screen can show the rulebook it is judged by."""
     return {"encounters": quest_rules.ENCOUNTERS, "levels": quest_rules.LEVELS,
-            "abilities": quest_rules.ABILITIES, "score": quest_rules.SCORE, "verdicts": quest_rules.VERDICTS,
+            "abilities": quest_rules.ABILITIES, "score_components": quest_rules.SCORE_COMPONENTS, "verdicts": quest_rules.VERDICTS,
             "starting_hp": quest_rules.STARTING_HP, "starting_credits": quest_rules.STARTING_CREDITS,
             "pass_heal": quest_rules.PASS_HEAL, "concede_damage": quest_rules.CONCEDE_DAMAGE}
 

@@ -33,6 +33,7 @@ def main() -> None:
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--perm", type=int, default=200, help="shuffles per Chimera overfitting test")
     ap.add_argument("--heroes", type=int, default=8, help="hypotheses the Researcher sends in (plus 4 decoys)")
+    ap.add_argument("--theory", action="append", default=[], help="your own hypothesis in words (repeatable)")
     ap.add_argument("--out", help="also copy the finished ledger here (e.g. the frontend demo)")
     args = ap.parse_args()
 
@@ -46,8 +47,10 @@ def main() -> None:
     run_id = f"quest-s{args.seed}-{'synthetic' if args.synthetic else 'real'}-{'llm' if args.llm else 'script'}"
     ledger = Ledger(run_id, ROOT / "data" / "quests", on_write=show, model=QuestEvent)
     researcher, skeptic = make_roles(args.llm)
+    from app.main import quest_sources
     Gauntlet(run_id, train, test, sensors, researcher, skeptic, ledger, seed=args.seed,
-             n_perm=args.perm, max_heroes=args.heroes).run()
+             n_perm=args.perm, max_heroes=args.heroes, theories=args.theory,
+             sources=quest_sources(train, test)).run()
     print(f"\nLedger saved to {ledger.path}")
     if args.out:
         shutil.copy(ledger.path, args.out)

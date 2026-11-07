@@ -67,13 +67,46 @@ If no claim is validated the finale says the evidence is inconclusive rather tha
 
 ## Who is the best researcher
 
-Score = HP left + 5 per level cleared + 2 per check passed − 2 per redundant check + 0.5 per
-unspent credit + 25 if validated. Fallen and look-ahead agents keep only the level points.
-A redundant check is an optional one bought after the agent had already failed the Mimic, so
-running many tests does not win on its own.
+The scoring rule is fixed before any run (`rules.SCORE_COMPONENTS`, computed in `gauntlet/report.py`
+from checks that already ran; nothing new is measured for the score):
+
+| Component | Max | How it is earned |
+|---|---|---|
+| Scientific validity | 20 | Share of the soundness checks passed (Trial, echo, within-person, majority, confounding); untested optional ones count half |
+| Out-of-sample performance | 25 | 25 if it beats the baseline on never-seen people (CI above 0); 8 if the gain is positive but uncertain |
+| Response to falsification tests | 20 | 10 for beating scrambled data, 5 for replicating in 3 of 5 groups, 5 for surviving selection-bias/sensor checks |
+| Handling of uncertainty | 10 | 10 if still significant after correcting for every claim tried (Benjamini-Hochberg) |
+| Detection of misleading evidence | 5 | Raw direction not contradicted (or honestly revised), and not too good to be true |
+| Avoidance of data leakage | 15 | 7.5 for mealtime-only information, 7.5 for no feature built from the outcome |
+| Research efficiency | 5 | 5 x share of checks that were neither redundant nor conceded |
+| HP bonus | 5 | 0.05 per HP left |
+
+- **Leakage voids the evidence.** If the Chronolock or the Reaper wins, validity, out-of-sample,
+  falsification and uncertainty all score 0: a result built on leaked information is not evidence.
+- **HP cannot override evidence.** The champion is the highest-scoring *VALIDATED* agent. Agents
+  are ranked by (validated first, score, tie-break), so no amount of HP or extra tests lets an
+  unvalidated claim win.
+- **Tie-break (predefined):** the most confident gain on unseen people, i.e. the lower end of the
+  holdout's 95% CI.
+- **Inconclusive:** if nothing is validated there is no champion, and the report says so.
+- Every agent starts with the same HP (100) and credits (18) and faces the same encounters.
 
 Credits are a gameplay and efficiency measure. They are not a multiple-testing correction:
 that is the Publication Bias Knight's job.
+
+## The record of every fight
+
+Each result or concession event carries an `encounter` record: `encounter_id`, `level`, `agent_id`,
+`hypothesis_id`, `evidence_source`, `evidence_version` (a fingerprint of the data), `enemy_type`,
+`research_action`, `test_requested`, `numerical_result`, `methodological_verdict`, `hp_change`,
+`explanation`, `timestamp`. The final report cites these ids, and the game's ledger view and
+"Inspect numbers" button show them in full.
+
+## Demo Mode
+
+`frontend/src/demo-quest.jsonl` is a recorded quest on synthetic meals with planted, known effects
+(regenerate with `scripts/run_gauntlet.py --synthetic --perm 200 --theory "..." --out frontend/src/demo-quest.jsonl`).
+The HUD shows a DEMO MODE badge and the report carries a disclaimer: these are not real findings.
 
 ## Impostors
 

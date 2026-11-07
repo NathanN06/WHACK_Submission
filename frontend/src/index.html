@@ -18,6 +18,15 @@
         increasingly challenging evidence. The strongest emerges with a transparent, defensible conclusion.</p>
     </div>
     <div class="title-menu frame">
+      <label class="question">Research question
+        <select id="question">
+          <option>What changes how much a person's blood sugar rises after a meal?</option>
+        </select>
+        <small>The question our measured data can answer: meals, glucose sensors and activity from two independent studies.</small>
+      </label>
+      <label class="theory">Your own hypothesis <small>(optional, in plain words)</small>
+        <input id="theory" maxlength="140" placeholder="e.g. Fibre-rich meals spike less">
+      </label>
       <label class="party-size">Hypotheses in the party
         <span class="stepper"><button type="button" id="fewer" aria-label="Fewer">−</button>
           <input id="party" type="number" min="1" max="12" value="8" inputmode="numeric" aria-label="Number of hypotheses">
@@ -38,16 +47,26 @@
     <header class="hud frame">
       <div class="hud-level"><span class="hud-num" id="hud-num">I</span><div><strong id="hud-name">The Rumour Dungeon</strong>
         <small id="hud-evidence">Evidence: popular claims</small></div></div>
+      <ol class="progress" id="progress" aria-label="Progress through the four levels">
+        <li data-l="1" title="Level I: The Rumour Dungeon">I</li><li data-l="2" title="Level II: The Forgotten Archives">II</li>
+        <li data-l="3" title="Level III: The Temple of Replication">III</li><li data-l="4" title="Level IV: The Citadel of Truth">IV</li>
+        <li data-l="5" title="The Overworld: final report">✦</li>
+      </ol>
+      <span class="demo-badge" id="demo-badge" hidden title="Synthetic meals with planted, known effects. Not a real discovery.">DEMO MODE · synthetic data</span>
       <div class="hud-stat"><small>Standing</small><strong id="hud-standing">0</strong></div>
       <div class="hud-stat"><small>Checks run</small><strong id="hud-checks">0</strong></div>
       <div class="hud-stat"><small>Weak claims caught</small><strong id="hud-caught">0</strong></div>
       <div class="controls" role="group" aria-label="Playback">
-        <button class="btn small" id="pause" aria-pressed="false">Pause</button>
+        <button class="btn small" id="pause" aria-pressed="false" title="Space">Pause</button>
         <button class="btn small speed" data-speed="1" aria-pressed="true">1×</button>
         <button class="btn small speed" data-speed="2" aria-pressed="false">2×</button>
         <button class="btn small speed" data-speed="4" aria-pressed="false">4×</button>
         <button class="btn small" id="skip" title="Play the rest of this level instantly">Skip level</button>
+        <button class="btn small" id="replay" title="Watch this quest again from the start">Replay</button>
         <button class="btn small" id="rulebook">Rulebook</button>
+        <button class="btn small" id="tutorial-btn">Tutorial</button>
+        <button class="btn small" id="motion" aria-pressed="false" title="Turn off shaking, particles and camera moves">Reduce motion</button>
+        <button class="btn small" id="view" aria-pressed="false" title="Switch between the game and the full research ledger">Ledger view</button>
       </div>
     </header>
 
@@ -68,15 +87,22 @@
         <canvas class="pixel portrait" id="foe-portrait" width="48" height="48" aria-hidden="true"></canvas>
         <div><small>Enemy</small><strong id="c-enemy">—</strong><small id="c-hero"></small></div>
       </div>
+      <button class="btn small inspect" id="inspect" disabled title="See every number the test returned">Inspect numbers</button>
       <dl class="combat-grid">
         <div><dt>1 · Obstacle</dt><dd id="c-attack">The party gathers at the dungeon gate.</dd></div>
         <div><dt>2 · Claim challenged</dt><dd id="c-claim">—</dd></div>
         <div><dt>3 · Agent action</dt><dd id="c-action">—</dd></div>
         <div><dt>4 · Test executed</dt><dd id="c-test">—</dd></div>
-        <div><dt>5 · Result</dt><dd id="c-result">—</dd></div>
-        <div class="c-hp"><dt>6 · HP</dt><dd id="c-hp">—</dd></div>
+        <div><dt title="What the statistics engine measured. CI = 95% confidence interval: the range the true value plausibly lies in.">5 · Result ⓘ</dt><dd id="c-result">—</dd></div>
+        <div class="c-hp"><dt title="HP = research integrity in the game, not a probability. Lost when a check fails, +5 back when one passes.">6 · HP ⓘ</dt><dd id="c-hp">—</dd></div>
         <div class="wide"><dt>7 · In plain English</dt><dd id="c-explain">—</dd></div>
       </dl>
+    </section>
+
+    <section class="ledger-view frame" id="ledger-view" hidden>
+      <h2>Research ledger</h2>
+      <p class="sub">Every encounter the Statistical Judge recorded, in order. Click a row for the raw numbers.</p>
+      <div class="table-wrap"><table id="ledger-table"></table></div>
     </section>
 
     <details class="ledger frame">
@@ -89,10 +115,13 @@
   <dialog id="finale" class="frame"></dialog>
   <dialog id="rules" class="frame"></dialog>
   <dialog id="hero-card" class="frame"></dialog>
+  <dialog id="inspect-dlg" class="frame"></dialog>
+  <dialog id="tutorial" class="frame"></dialog>
 
   <script src="quest-state.js"></script>
   <script src="sprites.js"></script>
   <script src="worlds.js"></script>
   <script src="gauntlet.js"></script>
+  <script src="report-ui.js"></script>
 </body>
 </html>

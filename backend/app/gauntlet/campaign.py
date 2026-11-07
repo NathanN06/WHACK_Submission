@@ -5,6 +5,7 @@ The party moves together: every hero faces a level's enemies, then the level clo
 the portal opens. Agents choose, the checks measure, the rules in rules.py decide HP.
 """
 
+import hashlib
 import time
 from collections import Counter
 
@@ -15,7 +16,7 @@ from ..arena.features import default_registry, public_catalog, register
 from ..arena.ledger import Ledger, preregister
 from ..arena.models import Gladiator
 from ..arena.orchestrator import _round
-from . import checks, rules
+from . import checks, report, rules
 from .agents import ScriptedResearcher, ScriptedSkeptic
 from .models import Hero, QuestEvent
 
@@ -30,10 +31,16 @@ class Gauntlet:
                  ledger: Ledger | None = None, hypotheses: list[dict] | None = None,
                  with_decoys: bool = True, max_heroes: int = 8, seed: int = 0,
                  n_perm: int = 200, n_boot: int = 500, pace: float = 0.0,
-                 runs_dir: str = "data/quests", target: str = "rise"):
+                 runs_dir: str = "data/quests", target: str = "rise", question: str = rules.DEFAULT_QUESTION,
+                 theories: list[str] | None = None, sources: dict | None = None):
         self.run_id, self.seed, self.n_perm, self.n_boot = run_id, seed, n_perm, n_boot
         self.pace, self.target, self.max_heroes = pace, target, max_heroes
         self.hypotheses, self.with_decoys = hypotheses, with_decoys
+        self.question, self.theories = question, [t for t in (theories or []) if t.strip()]
+        self.sources = {"discovery": "discovery set", "holdout": "independent holdout", "synthetic": False,
+                        **(sources or {})}
+        self.versions = {"discovery": _version(train), "holdout": _version(test)}
+        self._encounters = 0
         self.researcher = researcher or ScriptedResearcher()
         self.skeptic = skeptic or ScriptedSkeptic()
         self.ledger = ledger or Ledger(run_id, runs_dir, model=QuestEvent)
@@ -77,9 +84,11 @@ class Gauntlet:
             proposals = self.researcher.propose(catalog, self.max_heroes)
             self._check_fallback(self.researcher, "Researcher")
         self._emit(actor="system", action="quest_start",
-                   result={"levels": rules.LEVELS, "starting_hp": rules.STARTING_HP,
+                   result={"question": self.question, "sources": self.sources, "versions": self.versions,
+                           "levels": rules.LEVELS, "starting_hp": rules.STARTING_HP,
                            "starting_credits": rules.STARTING_CREDITS, "pass_heal": rules.PASS_HEAL,
-                           "concede_damage": rules.CONCEDE_DAMAGE, "score": rules.SCORE,
+                           "concede_damage": rules.CONCEDE_DAMAGE, "score_components": rules.SCORE_COMPONENTS,
+                           "hp_bonus": rules.HP_BONUS,
                            "verdicts": rules.VERDICTS, "abilities": rules.ABILITIES,
                            "encounters": {k: {f: v[f] for f in ("level", "name", "kind", "cost", "ability",
                                                                  "test", "damage", "damage_severe", "head")
@@ -94,6 +103,17 @@ class Gauntlet:
                            line=f"Turned away at the gate: {g.claim[:80]} (unknown or repeated evidence).")
                 continue
             self._add_hero(g.model_copy(update={"add_features": adds}))
+        for text in self.theories:
+            g = self.researcher.lanista.theory(text, catalog)
+            if g is None:
+                self._emit(actor="judge", action="rejected",
+                           line=f"Your hypothesis \"{text[:80]}\" uses no evidence this dataset measures.")
+                continue
+            adds = [f for f in dict.fromkeys(g.add_features) if f != "carbs"][:2] or ["carbs"]
+            if any(f not in allowed for f in adds):
+                continue
+            self._add_hero(g.model_copy(update={"add_features": adds, "origin": "crowd",
+                                                "claim": text.strip()[:140]}))
         if self.with_decoys:
             for name in DECOY_NAMES:
                 if name in self.train.columns:
@@ -137,9 +157,19 @@ class Gauntlet:
         for h in self.questing():
             h.levels_cleared += 1
             cleared.append(h.id)
+        heroes = list(self.heroes.values())
+        for h in heroes:
+            if h.questing or h.id in cleared or level not in h.hp_by_level:
+                h.hp_by_level[level] = h.hp
+        alive = [h for h in heroes if h.questing]
+        leader = max(alive, key=report.score, default=None)
         self._emit(actor="system", action="level_complete",
                    result={"level": level, "name": info["name"], "cleared": cleared,
-                           "heroes": [h.card() for h in self.heroes.values()]},
+                           "heroes": [h.card() for h in heroes],
+                           "rows": report.level_rows(heroes, level),
+                           "most_damaging": report.most_damaging_enemy(heroes, level),
+                           "leader": leader and {"id": leader.id, "name": leader.name, "score": report.score(leader),
+                                                 "claim": leader.gladiator.claim}},
                    line=f"Level complete: {info['name']}. {len(cleared)} of {len(self.heroes)} still standing.")
 
     def questing(self) -> list[Hero]:
@@ -160,9 +190,10 @@ class Gauntlet:
                 h.conceded += 1
                 h.history.append({"level": self.level, "enemy": key, "test": None, "passed": None,
                                   "hp_delta": -rules.CONCEDE_DAMAGE})
+                explain = "Skipping a check saves credits, but the claim stays unverified."
                 self._emit(actor="agent", action="concede", hero=h, enemy=key,
-                           hp_delta=-rules.CONCEDE_DAMAGE, line=line,
-                           explain="Skipping a check saves credits, but the claim stays unverified.")
+                           hp_delta=-rules.CONCEDE_DAMAGE, line=line, explain=explain,
+                           encounter=self._record(h, key, None, "CONCEDED", -rules.CONCEDE_DAMAGE, explain))
                 self._check_fall(h, key)
                 return
             self._emit(actor="agent", action="defend", hero=h, enemy=key, ability=enc["ability"], line=line)
@@ -201,9 +232,12 @@ class Gauntlet:
         h.history.append({"level": self.level, "enemy": key, "test": enc["test"],
                           "passed": result.get("passed"), "hp_delta": delta})
         line, explain = describe(enc["test"], result, h)
+        verdict = "UNTESTABLE" if result.get("untestable") else ("PASS" if result["passed"] else "FAIL")
+        rec = self._record(h, key, _round(result), verdict, delta, explain)
+        h.encounter_ids[enc["test"]] = rec["encounter_id"]
         self._emit(actor="judge", action="result", hero=h, enemy=key, ability=enc["ability"],
                    test=enc["test"], result=_round(result), passed=result.get("passed"),
-                   hp_delta=delta, line=line, explain=explain)
+                   hp_delta=delta, line=line, explain=explain, encounter=rec)
         if result.get("untestable") and enc["kind"] == "gate":
             h.status, h.verdict = "untestable", "UNTESTABLE"
             self._emit(actor="judge", action="exit", hero=h,
@@ -300,28 +334,42 @@ class Gauntlet:
     # ---------- the end ----------
 
     def finale(self) -> dict:
-        rows = []
-        for h in self.heroes.values():
+        heroes = list(self.heroes.values())
+        for h in heroes:
             if h.questing:
                 h.verdict = self._verdict(h)
-            rows.append({**h.card(), "cls": h.cls, "claim": h.gladiator.claim, "score": score(h),
-                         "levels_cleared": h.levels_cleared, "decoy": self.decoy_ids.get(h.id),
-                         "history": h.history})
-        rows.sort(key=lambda r: -r["score"])
+        rows = []
+        for h in heroes:
+            comp = report.score_components(h)
+            rows.append({**h.card(), "cls": h.cls, "claim": h.gladiator.claim, "score": report.score(h),
+                         "components": comp, "levels_cleared": h.levels_cleared,
+                         "decoy": self.decoy_ids.get(h.id), "crowd": h.gladiator.origin == "crowd",
+                         "hp_by_level": h.hp_by_level, "history": h.history,
+                         "damage": report.damage_by_weakness([h])})
+        rows.sort(key=lambda r: (r["verdict"] != "VALIDATED", -r["score"],
+                                 -report.tiebreak(self.heroes[r["id"]])))
         validated = [r for r in rows if r["verdict"] == "VALIDATED"]
+        champ_row = validated[0] if validated else None
+        champion = self.heroes[champ_row["id"]] if champ_row else None
         decoy_rows = [{"id": r["id"], "name": r["name"], "decoy": r["decoy"], "verdict": r["verdict"],
                        "caught": r["verdict"] != "VALIDATED"} for r in rows if r["decoy"]]
-        best = next((r for r in rows if r["verdict"] == "VALIDATED"), None)
-        if best:
-            conclusion = (f"{best['name']} the {best['cls']} emerges with the most defensible result: "
-                          f"\"{best['claim']}\".")
+        if champion:
+            champ_row["why"] = report.why_ranked(champion, champ_row["components"], rows)
+            conclusion = (f"{champion.name} the {champion.cls} emerges with the most defensible result: "
+                          f"\"{champion.gladiator.claim}\".")
         else:
-            conclusion = ("No hypothesis earned a validated conclusion. The honest verdict is: "
-                          "the evidence is inconclusive.")
+            conclusion = ("Inconclusive. No hypothesis survived every validation step, so the gauntlet "
+                          "names no winner.")
         result = {
-            "ranking": rows, "validated": len(validated), "best": best and best["id"],
+            "question": self.question, "sources": self.sources,
+            "ranking": rows, "validated": len(validated), "best": champion and champion.id,
+            "champion": champ_row and {**champ_row,
+                                       "contributions": report.contributions(champion, self.sources)},
             "decoys": decoy_rows, "caught": sum(d["caught"] for d in decoy_rows),
             "verdicts": dict(Counter(r["verdict"] for r in rows)),
+            "damage": report.damage_by_weakness(heroes),
+            "consensus": report.consensus(self.question, champion, heroes, self.decoy_ids, self.sources),
+            "score_components": rules.SCORE_COMPONENTS,
             "totals": {
                 "tests_attempted": sum(r["attempted"] for r in rows),
                 "credits_spent": sum(r["spent"] for r in rows),
@@ -353,6 +401,21 @@ class Gauntlet:
         order = [k for lvl in (1, 2, 3, 4) for k in rules.LEVEL_ORDER[lvl]]
         start = order.index(key) + 1 if key else order.index(rules.LEVEL_ORDER[self.level][-1]) + 1
         return sum(rules.ENCOUNTERS[k]["cost"] for k in order[start:] if rules.ENCOUNTERS[k]["kind"] == "gate")
+
+    def _record(self, h: Hero, key: str, numbers: dict | None, verdict: str, delta: int, explain: str) -> dict:
+        """The structured encounter record (spec section 12), written into the ledger."""
+        self._encounters += 1
+        enc = rules.ENCOUNTERS[key]
+        holdout = enc["test"] in ("final_boss", "provenance")
+        return {
+            "encounter_id": f"E{self._encounters:03d}", "level": self.level, "agent_id": h.id,
+            "hypothesis_id": _version(h.gladiator.model_dump(), 10),
+            "evidence_source": self.sources["holdout" if holdout else "discovery"],
+            "evidence_version": self.versions["holdout" if holdout else "discovery"],
+            "enemy_type": key, "research_action": enc["ability"] if numbers is not None else "concede",
+            "test_requested": enc["test"], "numerical_result": numbers, "methodological_verdict": verdict,
+            "hp_change": delta, "explanation": explain, "timestamp": time.time(),
+        }
 
     def _change_hp(self, h: Hero, delta: int) -> int:
         new = max(0, min(rules.STARTING_HP, h.hp + delta))
@@ -386,14 +449,15 @@ class Gauntlet:
             time.sleep(self.pace)
 
 
-def score(h: Hero) -> float:
-    """Defensibility: integrity left, levels survived, evidence found, efficiency. Documented in rules.SCORE."""
-    s = rules.SCORE
-    if h.verdict in ("FALLEN", "LOOK-AHEAD"):
-        return float(s["level_cleared"] * h.levels_cleared)
-    return round(s["hp"] * h.hp + s["level_cleared"] * h.levels_cleared + s["check_passed"] * h.passed_checks
-                 + s["redundant"] * h.redundant + s["credit_left"] * h.credits
-                 + (s["validated"] if h.verdict == "VALIDATED" else 0), 1)
+def _version(obj, n: int = 8) -> str:
+    """A short fingerprint of a dataset (or claim), so every record says which data it used."""
+    if obj is None:
+        return "none"
+    if isinstance(obj, pd.DataFrame):
+        blob = f"{obj.shape}|{','.join(map(str, obj.columns))}|{pd.util.hash_pandas_object(obj, index=False).sum()}"
+    else:
+        blob = repr(sorted(obj.items()) if isinstance(obj, dict) else obj)
+    return hashlib.sha256(blob.encode()).hexdigest()[:n]
 
 
 def _pm(x: float) -> str:

@@ -79,3 +79,27 @@ def test_llm_reply_with_no_features_falls_back_instead_of_crashing():
     assert [g.add_features for g in out] == [["fiber"], ["fat"]]
     g = agents.LLMLanista(model).theory("I reckon fibre flattens the spike", CATALOG)
     assert g.add_features == ["fiber"]
+
+
+def test_scripted_claims_read_like_real_hypotheses():
+    out = agents.ScriptedLanista().propose(2, CATALOG, [], k=5)
+    claims = [g.claim for g in out]
+    assert all("changes the rise after a meal" not in c for c in claims)
+    assert [g.expected_direction for g in out] == ["negative", "negative"]  # fibre and fat blunt the spike
+
+
+def test_llm_agents_count_their_fallbacks():
+    def broken(system, user):
+        raise ConnectionError("no key")
+    lanista = agents.LLMLanista(broken)
+    lanista.propose(2, CATALOG, [], k=5)
+    lanista.decide(state_with_trial())
+    assert lanista.fallbacks == 2
+
+
+def test_api_key_is_read_from_dotenv(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    (tmp_path / ".env").write_text('# secrets\nANTHROPIC_API_KEY="sk-test-123"\n')
+    agents.load_env_key(tmp_path / ".env")
+    import os
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-123"

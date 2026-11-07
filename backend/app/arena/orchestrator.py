@@ -47,6 +47,7 @@ class Arena:
         self.banished = False
         self._settled: set[str] = set()
         self._calls = 0
+        self._announced: set[str] = set()
 
     # ---------- running a whole game ----------
 
@@ -68,7 +69,9 @@ class Arena:
         self._start_day(day)
         catalog = [f for f in public_catalog(self.registry, day, set(self.train.columns))
                    if f["name"] not in {d.name for d in decoys.DECOY_FEATURES}]
-        for g in self.lanista.propose(day, catalog, self.graveyard(), self.k)[: self.k]:
+        proposals = self.lanista.propose(day, catalog, self.graveyard(), self.k)
+        self._check_fallback(self.lanista, "Lanista")
+        for g in proposals[: self.k]:
             g = self._validate(g, day, catalog)
             if g is not None:
                 self.enter(g)
@@ -120,6 +123,7 @@ class Arena:
         if not s.alive:
             return s
         back, line = (auto_back, "") if auto_back is not None else self.lanista.decide(s)
+        self._check_fallback(self.lanista, "Lanista")
         s.backed = bool(back)
         if not s.backed:
             s.status, s.verdict = "dropped", "DROPPED"
@@ -138,6 +142,7 @@ class Arena:
             if not options:
                 break
             test, line = self.sceptic.next_attack(s, options, self.denarii)
+            self._check_fallback(self.sceptic, "Sceptic")
             if test not in options:
                 break
             self._emit(actor="sceptic", action="attack", state=s, test=test, line=line)
@@ -247,6 +252,14 @@ class Arena:
                        gladiator=g.model_dump())
             return None
         return g.model_copy(update={"add_features": adds})
+
+    def _check_fallback(self, agent, role: str) -> None:
+        """Say so (once per agent) when Claude didn't answer and the script stepped in."""
+        if getattr(agent, "fallbacks", 0) and role not in self._announced:
+            self._announced.add(role)
+            self._emit(actor="system", action="fallback",
+                       line=f"Claude isn't answering as the {role} (no API key, or the API failed). "
+                            f"The scripted {role} takes over.")
 
     def _seed(self) -> int:
         self._calls += 1

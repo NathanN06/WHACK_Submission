@@ -165,3 +165,16 @@ def test_crowd_theory_fights_with_the_validated_features(tmp_path):
     a = arena(tmp_path, lanista=Greedy())
     s = a.exhibition("everything")
     assert s.gladiator.add_features == ["fiber", "fat"]
+
+
+def test_the_crowd_is_told_when_claude_is_not_answering(tmp_path):
+    from app.arena.agents import LLMLanista, LLMSceptic
+
+    def broken(system, user):
+        raise ConnectionError("no key")
+
+    a = arena(tmp_path, lanista=LLMLanista(broken), sceptic=LLMSceptic(broken))
+    a.play_day(1)
+    notices = [e.line for e in a.ledger.events if e.action == "fallback"]
+    assert len(notices) == 2  # once per agent, not once per call
+    assert any("Lanista" in n for n in notices) and any("Sceptic" in n for n in notices)

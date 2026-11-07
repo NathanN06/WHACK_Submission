@@ -37,11 +37,33 @@ SYNONYMS = {"fibre": "fiber", "sugars": "sugar", "kcal": "calories", "energy": "
             "heart rate": "hr_after", "hba1c": "hba1c"}
 
 
+# What a keen young researcher would claim about each feature: a direction and a reason.
+SCRIPTED_CLAIMS = {
+    "carbs": ("positive", "More carbohydrate means more sugar in the blood, so a bigger spike"),
+    "fiber": ("negative", "Fibre slows digestion, so fibre-rich meals spike less than their carbs suggest"),
+    "protein": ("negative", "Protein triggers insulin and slows the stomach, blunting the spike"),
+    "fat": ("negative", "Fat delays stomach emptying, so fatty meals spike later and lower"),
+    "sugar": ("positive", "Sugar hits the blood faster than starch, so sugary meals spike harder"),
+    "calories": ("positive", "Bigger meals spike more, whatever they are made of"),
+    "baseline_glucose": ("negative", "Starting high leaves less room to rise"),
+    "hour_of_day": ("either", "The body handles sugar differently at breakfast and dinner"),
+    "hours_since_last_meal": ("positive", "A long fast primes a bigger spike at the next meal"),
+    "steps_after": ("negative", "A walk after eating burns the sugar off before it peaks"),
+    "hr_after": ("negative", "A raised heart rate after eating means activity, which flattens the spike"),
+    "hba1c": ("positive", "People with poorer long-term control spike harder at every meal"),
+}
+
+
 class ScriptedLanista:
     def propose(self, day, catalog, graveyard, k):
         today = [f for f in catalog if f["day"] == day][:k]
-        return [Gladiator(id="new", claim=f"{f['name'].replace('_', ' ')} changes the rise after a meal",
-                          add_features=[f["name"]], day=day, origin="fallback") for f in today]
+        out = []
+        for f in today:
+            direction, claim = SCRIPTED_CLAIMS.get(
+                f["name"], ("either", f"{f['description']} changes the rise after a meal"))
+            out.append(Gladiator(id="new", claim=claim, add_features=[f["name"]], day=day,
+                                 expected_direction=direction, origin="fallback"))
+        return out
 
     def decide(self, state):
         trial = state.results.get("added_value", {})
@@ -151,6 +173,7 @@ class LLMLanista:
     def __init__(self, complete: Complete):
         self.complete = complete
         self.fallback = ScriptedLanista()
+        self.fallbacks = 0  # times the script had to answer for Claude
 
     def propose(self, day, catalog, graveyard, k):
         reply = ask(self.complete, LANISTA_SYSTEM, {
@@ -163,6 +186,7 @@ class LLMLanista:
                     '"expected_direction": "positive"|"negative"|"either"}]}',
         }, _Proposals)
         if reply is None:
+            self.fallbacks += 1
             return self.fallback.propose(day, catalog, graveyard, k)
         return [Gladiator(id="new", claim=p.claim, add_features=p.add_features,
                           expected_direction=p.expected_direction, day=day) for p in reply.gladiators[:k]]
@@ -173,7 +197,10 @@ class LLMLanista:
             "trial_result": _round(state.results.get("added_value", {})),
             "task": 'Back it (stake 20 reputation) or drop it (free)? Reply as {"back": bool, "line": str}',
         }, _Decision)
-        return (reply.back, reply.line) if reply else self.fallback.decide(state)
+        if reply is None:
+            self.fallbacks += 1
+            return self.fallback.decide(state)
+        return reply.back, reply.line
 
     def theory(self, text, catalog):
         reply = ask(self.complete, LANISTA_SYSTEM, {
@@ -183,6 +210,7 @@ class LLMLanista:
                     'Reply as {"gladiators": [{"claim": str, "add_features": [str]}]}',
         }, _Proposals)
         if reply is None:
+            self.fallbacks += 1
             return self.fallback.theory(text, catalog)
         if not reply.gladiators:
             return None
@@ -194,6 +222,7 @@ class LLMSceptic:
     def __init__(self, complete: Complete):
         self.complete = complete
         self.fallback = ScriptedSceptic()
+        self.fallbacks = 0
 
     def next_attack(self, state, options, denarii):
         reply = ask(self.complete, SCEPTIC_SYSTEM, {
@@ -205,6 +234,7 @@ class LLMSceptic:
             "task": 'Reply as {"test": one of the options or null, "line": str}',
         }, _Attack)
         if reply is None or (reply.test is not None and reply.test not in options):
+            self.fallbacks += 1
             return self.fallback.next_attack(state, options, denarii)
         return reply.test, reply.line
 
@@ -225,7 +255,23 @@ def anthropic_complete(model: str | None = None, temperature: float | None = Non
     return complete
 
 
+def load_env_key(path: str | os.PathLike = ".env") -> None:
+    """Put ANTHROPIC_API_KEY from a .env file into the environment, unless it is already set."""
+    if os.environ.get("ANTHROPIC_API_KEY"):
+        return
+    try:
+        lines = open(path).read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        key, sep, value = line.strip().partition("=")
+        if sep and key.strip() == "ANTHROPIC_API_KEY":
+            os.environ["ANTHROPIC_API_KEY"] = value.strip().strip('"').strip("'")
+            return
+
+
 def make_agents(use_llm: bool) -> tuple[Lanista, Sceptic]:
+    load_env_key(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"))
     if not use_llm:
         return ScriptedLanista(), ScriptedSceptic()
     return (LLMLanista(anthropic_complete(temperature=0.7)),

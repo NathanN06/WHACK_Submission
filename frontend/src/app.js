@@ -23,7 +23,7 @@ function card(g, sinceSeq) {
 
 // sinceSeq: cards hit after this ledger seq shake on this redraw.
 function render(sinceSeq) {
-  $("#day").textContent = state.dayName || "Waiting for the games";
+  $("#day").textContent = state.dayName || "The gates are opening";
   $("#reputation").textContent = state.reputation;
   $("#rep-bar").style.width = `${Math.max(0, Math.min(100, state.reputation))}%`;
   $("#denarii").textContent = state.denarii;
@@ -35,11 +35,11 @@ function render(sinceSeq) {
 
   $("#feed").innerHTML = state.feed.slice(0, 120).map((f) => {
     const mark = f.passed === true ? `<span class="pass">✓</span> ` : f.passed === false ? `<span class="fail">✗</span> ` : "";
-    return `<li><span class="who who-${f.actor}">${WHO[f.actor] || f.actor}${f.gid ? " · " + f.gid : ""}</span>${mark}${esc(f.line)}</li>`;
+    return `<li><span class="who who-${f.actor}">${WHO[f.actor] || f.actor}${f.gid ? " " + f.gid : ""}</span>${mark}${esc(f.line)}</li>`;
   }).join("");
 
   const c = counts(state);
-  $("#counter").textContent = `${c.fought} fought · ${c.fallen} fallen · ${c.standing} standing`;
+  $("#counter").textContent = `${c.fought} fought, ${c.fallen} fallen, ${c.standing} standing`;
   if (state.summary && !$("#summary").open) showSummary(state.summary);
 }
 
@@ -54,7 +54,7 @@ function showSummary(sum) {
     ${emperor}
     <table><tr><th>Verdict</th><th>Count</th></tr>${verdicts}</table>
     <table><tr><th>Decoy</th><th>Fate</th><th></th></tr>${decoys}</table>
-    <form method="dialog"><button>Close</button></form>`;
+    <form method="dialog"><button value="again" class="open-gates">Fight again</button> <button value="stay">Stay and look</button></form>`;
   $("#summary").showModal();
 }
 
@@ -75,23 +75,12 @@ async function follow(runId) {
     if (body.done && body.events.length === 0) break;
     await sleep(350);
   }
-  loadRuns();
 }
 
 async function post(url, data) {
   const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(data) });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
-}
-
-async function loadRuns() {
-  try {
-    const runs = await (await fetch("/api/runs")).json();
-    $("#runs").innerHTML = runs.filter((r) => !r.startsWith("t"))  // t* = crowd theories
-      .map((r) => `<option>${esc(r)}</option>`).join("");
-  } catch {
-    $("#runs").innerHTML = "<option value=''>no API</option>";
-  }
 }
 
 // Offline mode for frontend work: ?file=<path to a ledger .jsonl> plays it with no backend.
@@ -107,142 +96,113 @@ async function playFile(url) {
   }
 }
 
-// ---------- the roster editor ----------
+// ---------- screens ----------
 
-let rosterDefaults = null;
-let roster = null;
+const screens = { title: $("#screen-title"), gate: $("#screen-gate"), arena: $("#screen-arena") };
+let stopScene = () => {};
 
-function option(value, label, selected) {
-  return `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+function show(name) {
+  stopScene();
+  for (const [k, el] of Object.entries(screens)) el.hidden = k !== name;
+  if (name === "title") stopScene = animate($("#title-scene"), drawTitle);
+  if (name === "gate") { screens.gate.classList.add("ready"); stopScene = animate($("#gate-scene"), (ctx, f) => drawGate(ctx, 0, f)); $("#start").focus(); }
 }
 
-function renderRoster() {
-  if (!roster) return;
-  $("#roster-count").textContent = `${ticked(roster)} of max ${roster.max} ticked`;
-  $("#roster-list").innerHTML = roster.rows.map((r, i) => `
-    <div class="roster-row${r.on ? "" : " off"}" data-row="${i}">
-      <input type="checkbox" data-field="on" ${r.on ? "checked" : ""} aria-label="Let this one in">
-      <textarea data-field="claim" rows="2" maxlength="200" placeholder="Your hypothesis">${esc(r.claim)}</textarea>
-      <button type="button" class="remove" data-action="remove" aria-label="Remove">✕</button>
-      <div class="feats">
-        <select data-field="f1" aria-label="Feature">${roster.features.map((f) => option(f, f, f === r.f1)).join("")}</select>
-        <select data-field="f2" aria-label="Second feature">${option("", "+ no second feature", !r.f2)}${
-          roster.features.map((f) => option(f, f, f === r.f2)).join("")}</select>
-      </div>
-    </div>`).join("") || `<p class="roster-empty">No hypotheses yet. Add one.</p>`;
+// Press play: the gate screen falls in over the title, open, then the portcullis slams shut.
+let entering = false;
+async function enterGates() {
+  if (entering) return;
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return show("gate");
+  entering = true;
+  const gate = screens.gate, canvas = $("#gate-scene");
+  drawGate(canvas.getContext("2d"), 90, 0);
+  gate.classList.add("dropping");
+  gate.hidden = false;
+  await new Promise((r) => { gate.addEventListener("animationend", r, { once: true }); setTimeout(r, 900); });
+  stopScene();
+  screens.title.hidden = true;
+  gate.classList.remove("dropping");
+  await lowerGate(canvas);
+  gate.classList.add("slam");
+  setTimeout(() => gate.classList.remove("slam"), 400);
+  stopScene = animate(canvas, (ctx, f) => drawGate(ctx, 0, f));
+  setTimeout(() => { gate.classList.add("ready"); $("#start").focus(); entering = false; }, 300);
 }
+$("#play").addEventListener("click", enterGates);
+// Like a cartridge title screen: Enter or Space starts.
+document.addEventListener("keydown", (ev) => {
+  if (!screens.title.hidden && (ev.key === "Enter" || ev.key === " ")) { ev.preventDefault(); enterGates(); }
+});
 
-function note(text) {
-  $("#roster-note").textContent = text;
-  if (text) setTimeout(() => { if ($("#roster-note").textContent === text) $("#roster-note").textContent = ""; }, 3000);
-}
+// ---------- how many enter ----------
+
+let rosterBody = null;  // the default hypotheses; the first N enter
+let most = 12;
+
+function clampCount(n) { return Math.max(1, Math.min(most, Math.round(Number(n)) || 1)); }
+function setCount(n) { $("#how-many").value = clampCount(n); }
+
+$("#fewer").addEventListener("click", () => setCount(Number($("#how-many").value) - 1));
+$("#more").addEventListener("click", () => setCount(Number($("#how-many").value) + 1));
+$("#how-many").addEventListener("change", () => setCount($("#how-many").value));
 
 async function loadRoster() {
   try {
-    rosterDefaults = await (await fetch("/api/roster")).json();
-    $("#max-in").value = rosterDefaults.max_in;
-    roster = initRoster(rosterDefaults);
-    renderRoster();
+    const body = await (await fetch("/api/roster")).json();
+    rosterBody = body;
+    most = body.hypotheses.length;
   } catch {
-    $("#roster-list").innerHTML = `<p class="roster-empty">No API, so no roster. Games use the built-in Lanista.</p>`;
+    most = 40;  // no API: the built-in Lanista picks them
   }
+  $("#how-many").max = most;
+  setCount(most);
 }
-
-$("#roster-list").addEventListener("input", (ev) => {
-  const row = ev.target.closest(".roster-row");
-  if (!row || !roster) return;
-  const r = roster.rows[row.dataset.row];
-  const field = ev.target.dataset.field;
-  if (field === "claim") r.claim = ev.target.value;  // no redraw: keep the cursor where it is
-  if (field === "f1" || field === "f2") r[field] = ev.target.value;
-});
-
-$("#roster-list").addEventListener("change", (ev) => {
-  const row = ev.target.closest(".roster-row");
-  if (!row || !roster || ev.target.dataset.field !== "on") return;
-  if (ev.target.checked && !canTick(roster)) {
-    ev.target.checked = false;
-    note(`Only ${roster.max} can enter. Untick one first, or raise the max.`);
-    return;
-  }
-  roster.rows[row.dataset.row].on = ev.target.checked;
-  renderRoster();
-});
-
-document.addEventListener("click", (ev) => {
-  const action = ev.target.dataset.action;
-  if (!roster || (action !== "add" && action !== "remove")) return;
-  if (action === "add") {
-    roster.rows.push({ claim: "", f1: roster.features[1] || roster.features[0], f2: "", on: canTick(roster) });
-    renderRoster();
-    const boxes = document.querySelectorAll("#roster-list textarea");
-    boxes[boxes.length - 1]?.focus();
-  } else {
-    roster.rows.splice(Number(ev.target.closest(".roster-row").dataset.row), 1);
-    renderRoster();
-  }
-});
-
-$("#max-in").addEventListener("change", () => {
-  const n = Math.max(1, Math.min(40, Math.round(Number($("#max-in").value)) || 1));
-  $("#max-in").value = n;
-  if (roster) { setMax(roster, n); renderRoster(); }
-});
-
-$("#roster-reset").addEventListener("click", () => {
-  if (!rosterDefaults) return;
-  roster = initRoster(rosterDefaults, Number($("#max-in").value) || rosterDefaults.max_in);
-  renderRoster();
-});
 
 async function loadStatus() {
   try {
     const { claude } = await (await fetch("/api/status")).json();
-    $("#who-plays").textContent = claude ? "Claude is playing the Lanista and Sceptic"
-                                         : "Scripted players (no API key in .env)";
-    $("#who-plays").classList.toggle("on", claude);
+    $("#who-plays").textContent = claude ? "Claude plays the Lanista and the Sceptic"
+                                         : "Scripted players tonight (no API key in .env)";
   } catch {
-    $("#who-plays").textContent = "Offline replay";
+    $("#who-plays").textContent = "The arena server isn't running";
   }
 }
 
+// Open the gates: plaque drops away, portcullis rises, we walk into the dark of the tunnel.
+async function walkThrough() {
+  const gate = screens.gate;
+  stopScene();
+  gate.classList.remove("ready");
+  await raiseGate($("#gate-scene"));
+  if (matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  gate.classList.add("entering");
+  await new Promise((r) => setTimeout(r, 900));
+  gate.classList.remove("entering");
+  screens.arena.classList.add("arriving");
+  setTimeout(() => screens.arena.classList.remove("arriving"), 700);
+}
+
 $("#start").addEventListener("click", async () => {
+  const n = clampCount($("#how-many").value);
   $("#start").disabled = true;
   try {
-    const lineup = roster ? toPayload(roster) : {};
+    const lineup = rosterBody ? toPayload(initRoster(rosterBody, n)) : { max_in: n };
     const { run_id } = await post("/api/runs", lineup);
-    $("#roster").open = false;  // make room for the fight
+    await walkThrough();
+    show("arena");
     await follow(run_id);
   } catch (err) {
-    alert(`Could not start: ${err.message}`);
+    $("#who-plays").textContent = `The gates stayed shut: ${err.message}`;
   } finally {
     $("#start").disabled = false;
   }
 });
 
-$("#replay").addEventListener("click", async () => {
-  const id = $("#runs").value;
-  if (!id) return;
-  const { run_id } = await post("/api/runs", { replay: id, pace: 0.25 });
-  follow(run_id);
+$("#summary").addEventListener("close", () => {
+  if ($("#summary").returnValue === "again") show("gate");
 });
 
-$("#theory").addEventListener("submit", async (ev) => {
-  ev.preventDefault();
-  const text = $("#theory-text").value.trim();
-  if (!text) return;
-  $("#theory-result").textContent = "The crowd's gladiator enters the arena…";
-  try {
-    const body = await post("/api/theory", { text });
-    const lines = body.events.filter((e) => e.line && e.actor !== "system").map((e) => esc(e.line));
-    $("#theory-result").innerHTML = `<strong>${esc(body.verdict || "No feature matched")}</strong><br>${lines.join("<br>")}`;
-  } catch (err) {
-    $("#theory-result").textContent = `Failed: ${err.message}`;
-  }
-});
-
-loadRuns();
 loadRoster();
 loadStatus();
 const offline = new URLSearchParams(location.search).get("file");
-if (offline) playFile(offline);
+if (offline) { show("arena"); playFile(offline); } else show("title");

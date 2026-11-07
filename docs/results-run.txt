@@ -8,7 +8,7 @@ Loaded 45 CGMacros people, 58 BUT CGM people, sensors: one
   7 D1 sceptic  G01  hp=100             rep=100  $=56  Inquisitor, make sure nothing here peeks at the result.
   8 D1 engine   G01  hp=100             rep=100  $=56  The Inquisitor: nothing here is built from the result.
   9 D1 engine   G01  hp=100  SURVIVOR   rep=100  $=56  Survives the arena!
- 10 D1 engine                           rep=100  $=56  The Census counts 1 gladiator shuffle-tested so far. The more you try, the higher the bar.
+ 10 D1 engine                           rep=100  $=56  The Census counts 1 claim tried so far. The more you try, the higher the bar.
  11 D2 system                           rep=100  $=56  Day II: The Macros
  12 D2 lanista  G02  hp=100             rep=100  $=56  fiber changes the rise after a meal
  13 D2 engine   G02  hp=0    NO_EDGE    rep=100  $=55  The Trial: +0.08 mg/dL per meal across 45 people (95% CI -0.04 to +0.25). Hit for 100!
@@ -26,7 +26,7 @@ Loaded 45 CGMacros people, 58 BUT CGM people, sensors: one
  25 D2 engine   G05  hp=0    UNTESTABLE rep=100  $=49  The Trial: cannot be judged (only 1 people have this data).
  26 D2 lanista  G06  hp=100             rep=100  $=49  calories changes the rise after a meal
  27 D2 engine   G06  hp=0    NO_EDGE    rep=100  $=48  The Trial: +0.00 mg/dL per meal across 45 people (95% CI -0.19 to +0.16). Hit for 100!
- 28 D2 engine                           rep=100  $=48  The Census counts 2 gladiators shuffle-tested so far. The more you try, the higher the bar.
+ 28 D2 engine                           rep=100  $=48  The Census counts 5 claims tried so far. The more you try, the higher the bar.
  29 D3 system                           rep=100  $=48  Day III: The Lifestyle
  30 D3 lanista  G07  hp=100             rep=100  $=48  hour of day changes the rise after a meal
  31 D3 engine   G07  hp=0    REDUNDANT  rep=100  $=47  The Trial: +0.28 mg/dL per meal across 45 people (95% CI -0.28 to +0.81). Hit for 100!
@@ -44,7 +44,7 @@ Loaded 45 CGMacros people, 58 BUT CGM people, sensors: one
  43 D3 sceptic  G11  hp=100             rep=100  $=40  Inquisitor, make sure nothing here peeks at the result.
  44 D3 engine   G11  hp=100             rep=100  $=40  The Inquisitor: nothing here is built from the result.
  45 D3 engine   G11  hp=100  SURVIVOR   rep=100  $=40  Survives the arena!
- 46 D3 engine                           rep=100  $=40  The Census counts 3 gladiators shuffle-tested so far. The more you try, the higher the bar.
+ 46 D3 engine                           rep=100  $=40  The Census counts 9 claims tried so far. The more you try, the higher the bar.
  47 D4 system                           rep=100  $=40  Day IV: The Decoy Games
  48 D4 emperor  G12  hp=100             rep=100  $=40  Wearing a lucky charm lowers the rise
  49 D4 engine   G12  hp=0    NO_EDGE    rep=100  $=39  The Trial: -0.03 mg/dL per meal across 45 people (95% CI -0.07 to +0.01). Hit for 100!
@@ -64,7 +64,7 @@ Loaded 45 CGMacros people, 58 BUT CGM people, sensors: one
  63 D4 system   G14  hp=0    LEAKY      rep=80   $=34  Lanista reputation -20.
  64 D4 emperor  G15  hp=100             rep=80   $=34  The carb load index adds to carbs
  65 D4 engine   G15  hp=0    REDUNDANT  rep=80   $=33  The Trial: +0.04 mg/dL per meal across 45 people (95% CI -0.12 to +0.21). Hit for 100!
- 66 D4 engine                           rep=80   $=33  The Census counts 4 gladiators shuffle-tested so far. The more you try, the higher the bar.
+ 66 D4 engine                           rep=80   $=33  The Census counts 13 claims tried so far. The more you try, the higher the bar.
  67 D5 system                           rep=80   $=33  Day V: The Champion
  68 D5 system   G01  hp=100  SURVIVOR   rep=80   $=33  Locked before the fight: aaac1a772ece
  69 D5 engine   G01  hp=0    FALLEN     rep=80   $=28  The Champion of Brno: +0.46 mg/dL per meal across 58 unseen people (95% CI -0.29 to +1.15). Hit for 100!

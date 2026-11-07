@@ -44,3 +44,4 @@ type 2 participants), so "fails to transfer" is the honest reading, not "carbs d
 - One sensor only: `meal_responses` has no per-sensor rows, so the Twins never fought.
 - Gains are small in absolute terms because the per-meal rise is noisy (mean 55 mg/dL); the CIs, not the point estimates, carry the verdicts.
 - The Lanista finished with reputation 20: it backed four gladiators that fell at the holdout.
+- The Census counts every claim the Trial judged (13 by Day IV), not only the ones that reached the Shuffler.

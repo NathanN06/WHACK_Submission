@@ -109,19 +109,24 @@ class RosterLanista:
 
 
 def default_roster(catalog: list[dict], days=(1, 2, 3)) -> list[dict]:
-    """What the roster editor starts from: per day, the features on offer and the scripted ideas."""
-    out = []
-    for day in days:
-        ideas = ScriptedLanista().propose(day, catalog, [], k=99)
-        out.append({
-            "day": day,
-            "name": config.DAY_NAMES[day],
-            "features": [f["name"] for f in catalog if f["day"] == day],
-            "catalog": [f for f in catalog if f["day"] <= day],
-            "hypotheses": [{"claim": g.claim, "add_features": g.add_features,
-                            "expected_direction": g.expected_direction} for g in ideas],
-        })
-    return out
+    """What the roster editor starts from: one list of the scripted ideas."""
+    return [{"claim": g.claim, "add_features": g.add_features, "expected_direction": g.expected_direction}
+            for day in days for g in ScriptedLanista().propose(day, catalog, [], k=99)]
+
+
+def schedule(hypotheses: list[dict], catalog: list[dict], last_day: int = 3) -> dict[int, list[dict]]:
+    """File each hypothesis under the day its latest feature unlocks (unknown features: last day,
+    where the gate turns them away in the feed).
+
+    Carbs alone fights on Day I against guessing the average; anything else fights against carbs.
+    """
+    unlock = {f["name"]: f["day"] for f in catalog}
+    last = last_day
+    days: dict[int, list[dict]] = {}
+    for h in hypotheses:
+        day = max(unlock.get(f, last) for f in h["add_features"])
+        days.setdefault(day, []).append(h)
+    return dict(sorted(days.items()))
 
 
 class ScriptedSceptic:

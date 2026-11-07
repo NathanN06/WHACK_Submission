@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .arena.agents import RosterLanista, default_roster, llm_available, make_agents
+from .arena.agents import RosterLanista, default_roster, llm_available, make_agents, schedule
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
@@ -45,8 +45,8 @@ class RosterEntry(BaseModel):
 
 
 class RunRequest(BaseModel):
-    roster: dict[int, list[RosterEntry]] | None = None  # day -> the hypotheses you let in
-    max_per_day: int = Field(5, ge=1, le=10)
+    hypotheses: list[RosterEntry] | None = Field(None, max_length=40)  # the ones you ticked, in order
+    max_in: int = Field(12, ge=1, le=40)
     emperor: Literal["real", "fake"] | None = None
     llm: bool | None = None  # None = Claude if an API key is set
     replay: str | None = None
@@ -85,12 +85,12 @@ def start_run(req: RunRequest):
     else:
         train, test, sensors = frames()
         lanista, sceptic = make_agents(_use_llm(req.llm))
-        if req.roster is not None:
-            lanista = RosterLanista({day: [e.model_dump() for e in items]
-                                     for day, items in req.roster.items()}, base=lanista)
+        if req.hypotheses is not None:
+            chosen = [e.model_dump() for e in req.hypotheses[: req.max_in]]
+            lanista = RosterLanista(schedule(chosen, _catalog(train)), base=lanista)
         ledger = Ledger(run_id, RUNS)
         arena = Arena(run_id, train, test, sensors, lanista, sceptic, ledger,
-                      emperor=req.emperor, seed=req.seed, pace=req.pace, k=req.max_per_day)
+                      emperor=req.emperor, seed=req.seed, pace=req.pace, k=req.max_in)
         thread = threading.Thread(target=arena.run, daemon=True)
     thread.start()
     _runs[run_id] = {"ledger": ledger, "thread": thread}
@@ -102,12 +102,17 @@ def status():
     return {"claude": llm_available()}
 
 
+def _catalog(train) -> list[dict]:
+    return public_catalog(default_registry(), 3, set(train.columns))
+
+
 @app.get("/api/roster")
 def roster():
-    """Each day's features and the pre-filled hypotheses the roster editor starts from."""
+    """Every feature, and the pre-filled hypotheses the roster editor starts from."""
     train, _, _ = frames()
-    catalog = public_catalog(default_registry(), 3, set(train.columns))
-    return {"days": default_roster(catalog), "max_per_day": 5}
+    catalog = _catalog(train)
+    hypotheses = default_roster(catalog)
+    return {"features": catalog, "hypotheses": hypotheses, "max_in": len(hypotheses)}
 
 
 @app.get("/api/runs")

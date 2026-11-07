@@ -112,11 +112,17 @@ def test_roster_lanista_sends_exactly_the_hypotheses_you_wrote():
     assert agents.RosterLanista(roster).propose(3, CATALOG, [], k=5) == []  # nothing ticked that day
 
 
-def test_default_roster_is_the_scripted_proposals():
-    days = agents.default_roster(CATALOG)
-    assert [d["day"] for d in days] == [1, 2, 3]
-    assert [h["add_features"] for h in days[1]["hypotheses"]] == [["fiber"], ["fat"]]
-    assert days[1]["features"] == ["fiber", "fat"]  # unlocked that day
+def test_default_roster_is_one_flat_list_of_the_scripted_ideas():
+    hyps = agents.default_roster(CATALOG)
+    assert [h["add_features"] for h in hyps] == [["carbs"], ["fiber"], ["fat"]]
+
+
+def test_hypotheses_are_scheduled_by_their_latest_feature():
+    hyps = [{"claim": "a", "add_features": ["carbs"]},
+            {"claim": "b", "add_features": ["fiber", "carbs"]},
+            {"claim": "c", "add_features": ["mystery"]}]
+    days = agents.schedule(hyps, CATALOG)
+    assert {d: [h["claim"] for h in hs] for d, hs in days.items()} == {1: ["a"], 2: ["b"], 3: ["c"]}
 
 
 def test_blank_key_in_dotenv_is_ignored(tmp_path, monkeypatch):

@@ -30,15 +30,17 @@
 
   <details class="roster" id="roster" open>
     <summary>
-      <span class="roster-title">The Lanista's roster</span>
-      <span class="roster-hint">Edit the hypotheses, tick who enters each day</span>
+      <span class="roster-title">Your hypotheses</span>
+      <span class="roster-hint">Edit them, pick their features, tick which ones enter the arena</span>
     </summary>
     <div class="roster-bar">
-      <label>Max per day <input id="max-per-day" type="number" min="1" max="10" value="5"></label>
+      <label>Max in the arena <input id="max-in" type="number" min="1" max="40" value="12"></label>
+      <span id="roster-count" class="roster-hint"></span>
       <button id="roster-reset" type="button">Reset to defaults</button>
       <span id="roster-note" role="status"></span>
     </div>
-    <div class="roster-days" id="roster-days"><p class="roster-empty">Loading the roster…</p></div>
+    <div class="roster-list" id="roster-list"><p class="roster-empty">Loading the roster…</p></div>
+    <button type="button" class="roster-add" data-action="add" id="roster-add">+ Add a hypothesis</button>
   </details>
 
   <main>

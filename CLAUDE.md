@@ -7,6 +7,14 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - `frontend/` — web UI
 - `docs/` — notes and pitch material
 - `scripts/download_data.py` — downloads datasets into `data/` (gitignored; never commit data)
+- `scripts/build_db.py` — loads the CSVs into `data/whack.duckdb` (run with `.venv/bin/python`)
+
+## Data conventions
+- `participant_id` = a person (`CGM-001`, `BUT-101`); `session_id` = one measurement period. Train/holdout splits must be by `participant_id`.
+- Glucose is always mg/dL. Timestamps are date-shifted (absolute dates meaningless; time-of-day/weekday valid).
+- Table/column docs live in the DB as comments (`duckdb_tables()`, `duckdb_columns()`); keep `TABLE_DOCS`/`COLUMN_DOCS` in `build_db.py` updated when changing tables.
+- In CGMacros the Dexcom reads ~30 mg/dL higher than the Libre on average; `meal_responses` uses Dexcom in both datasets (5-min readings). CGMacros ships CGM values interpolated to 1-min; the `glucose` table keeps only real readings.
+- Meal-effect analyses should filter `meal_responses` on `clean`.
 
 ## Guidelines
 - Hackathon pace: keep things simple and demo-able; prefer working end-to-end over polish.

@@ -317,5 +317,6 @@ def make_agents(use_llm: bool) -> tuple[Lanista, Sceptic]:
     load_env_key(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"))
     if not use_llm:
         return ScriptedLanista(), ScriptedSceptic()
-    return (LLMLanista(anthropic_complete(temperature=0.7)),
-            LLMSceptic(anthropic_complete(temperature=0.2)))
+    # No temperature: the installed SDK's messages.create() rejects it, which silently
+    # sent every call to the scripted fallback.
+    return LLMLanista(anthropic_complete()), LLMSceptic(anthropic_complete())

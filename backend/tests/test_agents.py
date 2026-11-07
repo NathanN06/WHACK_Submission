@@ -125,3 +125,20 @@ def test_blank_key_in_dotenv_is_ignored(tmp_path, monkeypatch):
     agents.load_env_key(tmp_path / ".env")
     import os
     assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+def test_claude_calls_only_use_arguments_the_sdk_accepts(monkeypatch):
+    import sys
+    import types
+
+    seen = {}
+
+    class Messages:
+        def create(self, model, max_tokens, system, messages):  # no temperature in this SDK
+            seen["model"] = model
+            return types.SimpleNamespace(content=[types.SimpleNamespace(type="text", text="hi")])
+
+    fake = types.SimpleNamespace(Anthropic=lambda: types.SimpleNamespace(messages=Messages()))
+    monkeypatch.setitem(sys.modules, "anthropic", fake)
+    lanista, sceptic = agents.make_agents(True)
+    assert lanista.complete("sys", "user") == "hi" and sceptic.complete("sys", "user") == "hi"

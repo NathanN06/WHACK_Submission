@@ -10,6 +10,9 @@ By default only its CSV files (CGM, meals, activities, sleep, CPET, ...) are
 downloaded. Use --include-hr for beat-by-beat heart rate CSVs and
 --include-signals for the raw .h5 signals.
 
+For the separate level-three database, run scripts/build_level3_db.py. It uses
+iter_cgmacros_csvs() below to stream just the CGMacros CSVs into the new database.
+
 Usage:
   python scripts/download_data.py                 # both datasets (CSV-only for BUT CGM)
   python scripts/download_data.py --only cgmacros
@@ -21,6 +24,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import re
 import shutil
 import sys
@@ -40,9 +44,9 @@ BUT_CGM_URL = "https://physionet.org/files/but-cgm/1.0.0/"
 USER_AGENT = "WHACK-data-downloader/1.0"
 
 
-def _open(url: str, retries: int = 5):
+def _open(url: str, retries: int = 5, headers: dict[str, str] | None = None):
     """Open url, retrying with backoff on timeouts / transient network errors."""
-    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    req = urllib.request.Request(url, headers={"User-Agent": USER_AGENT, **(headers or {})})
     for attempt in range(retries):
         try:
             return urllib.request.urlopen(req, timeout=60)
@@ -53,6 +57,74 @@ def _open(url: str, retries: int = 5):
             if attempt == retries - 1:
                 raise
         time.sleep(2**attempt)
+
+
+class _RemoteZip(io.RawIOBase):
+    """Read selected CGMacros CSVs with byte ranges, without downloading photos."""
+
+    def __init__(self, url: str):
+        super().__init__()
+        with _open(url, headers={"Range": "bytes=0-0"}) as response:
+            if response.status != 206:
+                raise RuntimeError("The CGMacros server must support HTTP byte ranges.")
+            self.url = response.geturl()
+            self.size = int(response.headers["Content-Range"].rsplit("/", 1)[1])
+            response.read()
+        self.position = 0
+
+    def seekable(self):
+        return True
+
+    def tell(self):
+        return self.position
+
+    def seek(self, offset, whence=io.SEEK_SET):
+        if whence == io.SEEK_SET:
+            position = offset
+        elif whence == io.SEEK_CUR:
+            position = self.position + offset
+        elif whence == io.SEEK_END:
+            position = self.size + offset
+        else:
+            raise ValueError("Invalid seek origin.")
+        if position < 0:
+            raise ValueError("Cannot seek before the start of the archive.")
+        self.position = position
+        return position
+
+    def read(self, size=-1):
+        end = self.size if size < 0 else min(self.position + size, self.size)
+        if self.position >= end:
+            return b""
+        with _open(self.url, headers={"Range": f"bytes={self.position}-{end - 1}"}) as response:
+            # Fail before reading the response if the server ignores Range.
+            if response.status != 206:
+                raise RuntimeError("The CGMacros server must support HTTP byte ranges.")
+            content = response.read()
+        if len(content) != end - self.position:
+            raise RuntimeError("Incomplete CGMacros download; please try again.")
+        self.position = end
+        return content
+
+
+def iter_cgmacros_csvs():
+    """Yield (source participant ID, CSV bytes) for every available person.
+
+    No ZIP, meal photograph, or intermediate CSV is saved. The level-three builder
+    consumes these bytes directly. Both datasets' on-disk download commands below
+    remain available independently.
+    """
+    with _RemoteZip(CGMACROS_URL) as remote, zipfile.ZipFile(remote) as archive:
+        files = [
+            name for name in archive.namelist()
+            if re.search(r"(?:^|/)CGMacros-\d+\.csv$", name) and "__MACOSX" not in name
+        ]
+        if not files:
+            raise ValueError("No participant CSVs found in the CGMacros archive.")
+        files.sort(key=lambda name: int(re.search(r"CGMacros-(\d+)\.csv$", name).group(1)))
+        for name in files:
+            participant_id = int(re.search(r"CGMacros-(\d+)\.csv$", name).group(1))
+            yield participant_id, archive.read(name)
 
 
 def download_file(url: str, dest: Path, show_progress: bool = False) -> None:

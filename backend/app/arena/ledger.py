@@ -14,18 +14,19 @@ from .models import Event, Gladiator
 
 
 class Ledger:
-    def __init__(self, run_id: str, directory: str | Path = "data/runs", on_write=None):
+    def __init__(self, run_id: str, directory: str | Path = "data/runs", on_write=None, model=Event):
         self.run_id = run_id
+        self.model = model  # the row shape: arena Event, or the gauntlet's QuestEvent
         self.path = Path(directory) / f"{run_id}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text("")
-        self.events: list[Event] = []
+        self.events: list = []
         self.on_write = on_write  # optional callback, e.g. print each event live
         self._lock = threading.Lock()
 
     def write(self, **fields) -> Event:
         with self._lock:
-            event = Event(run_id=self.run_id, seq=len(self.events) + 1, ts=time.time(), **fields)
+            event = self.model(run_id=self.run_id, seq=len(self.events) + 1, ts=time.time(), **fields)
             self.events.append(event)
             with self.path.open("a") as f:
                 f.write(event.model_dump_json() + "\n")
@@ -33,13 +34,13 @@ class Ledger:
             self.on_write(event)
         return event
 
-    def since(self, seq: int) -> list[Event]:
+    def since(self, seq: int) -> list:
         with self._lock:
             return list(self.events[seq:])
 
 
-def load(path: str | Path) -> list[Event]:
-    return [Event.model_validate_json(line) for line in Path(path).read_text().splitlines() if line]
+def load(path: str | Path, model=Event) -> list:
+    return [model.model_validate_json(line) for line in Path(path).read_text().splitlines() if line]
 
 
 def preregister(g: Gladiator) -> str:

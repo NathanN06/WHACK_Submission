@@ -48,3 +48,25 @@ def make_sensor_pair(df: pd.DataFrame, seed: int = 0, fiber_on_second: bool = Tr
     if not fiber_on_second:
         second["rise"] = second["rise"] + 1.5 * df["fiber"]
     return {"libre": df.copy(), "dexcom": second}
+
+
+def make_quest_world(seed: int = 0, n_train: int = 36, n_test: int = 24):
+    """(train, holdout, sensors) for the gauntlet: make_meals plus timing and activity.
+
+    Extra truth: a walk after the meal lowers the rise (steps_after, known only AFTER
+    eating, so the Chronolock Guardian must stop it), and a long gap since the last
+    meal raises it a little. hr_after only follows steps.
+    """
+    def extend(df, s):
+        rng = np.random.default_rng(s)
+        df = df.copy()
+        df["hours_since_last_meal"] = rng.uniform(1, 12, len(df))
+        df["steps_after"] = rng.gamma(2.0, 900, len(df))
+        df["hr_after"] = 70 + df["steps_after"] / 150 + rng.normal(0, 6, len(df))
+        df["rise"] = df["rise"] - 0.006 * df["steps_after"] + 0.8 * df["hours_since_last_meal"]
+        return df
+
+    train = extend(make_meals(n_train, seed=seed), seed + 1)
+    test = extend(make_meals(n_test, seed=seed + 50, prefix="B"), seed + 2)
+    train.attrs["synthetic"] = test.attrs["synthetic"] = True
+    return train, test, make_sensor_pair(train)

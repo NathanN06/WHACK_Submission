@@ -105,3 +105,40 @@ def test_claude_is_used_automatically_when_a_key_exists(client, monkeypatch):
         assert client.get("/api/status").json() == {"claude": available}
         wait_for(client, client.post("/api/runs", json={"pace": 0}).json()["run_id"])
     assert used == [True, False]
+
+
+@pytest.fixture
+def quest_client(tmp_path, monkeypatch):
+    from tests.fixtures import make_quest_world
+    world = make_quest_world(0, n_train=14, n_test=12)
+    monkeypatch.setattr(main, "frames", lambda: world)
+    monkeypatch.setattr(main, "QUESTS", tmp_path)
+    return TestClient(main.app)
+
+
+def wait_for_quest(client, quest_id, timeout=120):
+    seen, deadline = [], time.time() + timeout
+    while time.time() < deadline:
+        body = client.get(f"/api/quests/{quest_id}/events", params={"after": len(seen)}).json()
+        seen += body["events"]
+        if body["done"]:
+            return seen
+        time.sleep(0.1)
+    raise TimeoutError
+
+
+def test_a_quest_streams_to_the_finale_and_replays(quest_client):
+    body = {"max_heroes": 2, "n_perm": 20, "llm": False}
+    quest_id = quest_client.post("/api/quests", json=body).json()["quest_id"]
+    events = wait_for_quest(quest_client, quest_id)
+    assert events[-1]["action"] == "finale"
+    replay = quest_client.post("/api/quests", json={"replay": quest_id}).json()["quest_id"]
+    assert [e["line"] for e in wait_for_quest(quest_client, replay)] == [e["line"] for e in events]
+    assert quest_id in quest_client.get("/api/quests").json()
+    assert quest_client.get("/api/quests-rules").json()["encounters"]["guardian"]["damage"] > 0
+
+
+def test_quest_paths_stay_in_the_quest_folder(quest_client, tmp_path):
+    (tmp_path.parent / "secret.jsonl").write_text("")
+    assert quest_client.post("/api/quests", json={"replay": "../secret"}).status_code == 404
+    assert quest_client.get("/api/quests/..%2Fsecret/events").status_code == 404

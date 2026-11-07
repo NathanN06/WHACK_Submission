@@ -49,6 +49,44 @@ data/
   but-cgm/    BUT CGM: top-level CSVs + one folder per participant/session (e.g. 101001/)
 ```
 
+### Build the database
+
+All the CSVs are loaded into a single [DuckDB](https://duckdb.org) database, `data/whack.duckdb` (a relational database you query with SQL):
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python scripts/build_db.py     # a few seconds, rebuilds from scratch
+```
+
+Both datasets are merged into shared tables:
+
+- IDs: `participant_id` (`CGM-001`, `BUT-101`) is one **person**; `session_id` is one ~10-day measurement period.
+- Units: glucose is always **mg/dL**.
+
+| Table | What it holds |
+|---|---|
+| `participants` | One row per person: age, sex, BMI, HbA1c, `glycemic_status` (healthy / prediabetes / type2_diabetes / healthy_active) |
+| `sessions` | Measurement periods (start, end, days) |
+| `glucose` | Every CGM reading (~1.5M rows), with `sensor` (libre / dexcom / dexcom_g7) |
+| `meals` | Every logged food item with calories, carbs, protein, fat, fiber, sugar, and its `meal_event_id` |
+| `meal_events` | One row per eating occasion: items logged within 30 min of each other merged, macros summed |
+| `meal_responses` | **Derived**: glucose response to each meal event (baseline, peak, rise, time-to-peak, 2h area under curve). Every event has a row; use `WHERE clean` for meal-effect analyses (`exclusion_reason` says why a row failed quality checks) |
+| `cgmacros_minute` | CGMacros minute-level heart rate, METs, activity calories, steps |
+| `activities`, `sleep`, `daily_steps`, `daily_nutrition`, `daily_questionnaire` | BUT CGM lifestyle data |
+| `cpet_data`, `cpet_summary`, `cpet_metadata` | BUT CGM lab exercise tests |
+| `gut_health`, `microbes`, `cgmacros_bio` | CGMacros gut microbiome and full lab sheet |
+| `but_subject_info`, `but_data_completeness` | BUT CGM entry questionnaire and data availability |
+
+Every table and column has a description stored in the database:
+
+```sql
+SELECT table_name, comment FROM duckdb_tables();
+SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'meal_responses';
+```
+
+Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.connect('data/whack.duckdb').sql('FROM meal_responses LIMIT 5'))"`
+
 ## Getting started
 
 _Setup instructions coming soon._

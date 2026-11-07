@@ -17,10 +17,11 @@ from .arena.agents import RosterLanista, default_roster, llm_available, make_age
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
-from .gauntlet import rules as quest_rules
-from .gauntlet.agents import make_roles
-from .gauntlet.campaign import Gauntlet
-from .gauntlet.models import QuestEvent
+from .epi import rules as epi_rules
+from .epi.agents import make_epidemiologist
+from .epi.campaign import EpiQuest
+from .epi.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS
+from .epi.models import QuestEvent
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "runs"
@@ -151,20 +152,15 @@ def test_theory(req: TheoryRequest):
             "events": [e.model_dump() for e in arena.ledger.events]}
 
 
-# ---------- Hypothesis Gauntlet ----------
+# ---------- Hypothesis Gauntlet: Epidemiology Edition ----------
 
 
 class QuestRequest(BaseModel):
-    question: str = Field(quest_rules.DEFAULT_QUESTION, max_length=200)
-    theories: list[str] = Field(default_factory=list, max_length=3)  # your own hypotheses, in words
-    hypotheses: list[RosterEntry] | None = Field(None, max_length=20)
-    max_heroes: int = Field(8, ge=1, le=16)
-    decoys: bool = True
-    llm: bool | None = None  # None = Claude if an API key is set
+    campaign: str = Field("A", max_length=40)  # A-D or a campaign id
+    llm: bool | None = None  # None = Claude plays the four agents if an API key is set
     replay: str | None = None
-    pace: float = 0.0
+    pace: float = Field(0.0, ge=0, le=5)
     seed: int = 0
-    n_perm: int = Field(200, ge=20, le=1000)
 
 
 def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
@@ -173,36 +169,27 @@ def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
         time.sleep(pace)
 
 
-def quest_sources(train, test) -> dict:
-    """Names for the evidence on screen. Real data unless the frames say they are synthetic."""
-    synthetic = bool(getattr(train, "attrs", {}).get("synthetic"))
-    n_tr = train["participant_id"].nunique()
-    n_te = 0 if test is None else test["participant_id"].nunique()
-    if synthetic:
-        return {"discovery": f"synthetic meals ({n_tr} people)", "holdout": f"synthetic holdout ({n_te} people)",
-                "synthetic": True}
-    return {"discovery": f"CGMacros ({n_tr} people)", "holdout": f"BUT CGM ({n_te} people)", "synthetic": False}
+def _campaign_id(key: str) -> str:
+    cid = BY_LETTER[key.upper()].id if key.upper() in BY_LETTER else key
+    if cid not in CAMPAIGNS:
+        raise HTTPException(404, f"no campaign {key}")
+    return cid
 
 
 @app.post("/api/quests")
 def start_quest(req: QuestRequest):
     quest_id = _new_id("q")
-    ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
     if req.replay:
         source = Path(QUESTS) / f"{req.replay}.jsonl"
         if source.resolve().parent != Path(QUESTS).resolve() or not source.exists():
             raise HTTPException(404, f"no recorded quest {req.replay}")
+        ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
         thread = threading.Thread(target=_replay_quest, args=(ledger, source, req.pace), daemon=True)
         quest = None
     else:
-        train, test, sensors = frames()
-        researcher, skeptic = make_roles(_use_llm(req.llm))
-        chosen = None if req.hypotheses is None else [e.model_dump() for e in req.hypotheses[: req.max_heroes]]
-        quest = Gauntlet(quest_id, train, test, sensors, researcher, skeptic, ledger, hypotheses=chosen,
-                         question=req.question, theories=[t[:140] for t in req.theories],
-                         sources=quest_sources(train, test),
-                         with_decoys=req.decoys, max_heroes=req.max_heroes, seed=req.seed,
-                         n_perm=req.n_perm, pace=req.pace)
+        cid = _campaign_id(req.campaign)
+        ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
+        quest = EpiQuest(quest_id, cid, ledger, make_epidemiologist(_use_llm(req.llm)), seed=req.seed, pace=req.pace)
         thread = threading.Thread(target=quest.run, daemon=True)
     thread.start()
     _quests[quest_id] = {"ledger": ledger, "thread": thread, "quest": quest}
@@ -240,13 +227,20 @@ def quest_events(quest_id: str, after: int = 0):
     return {"events": [e.model_dump() for e in events], "done": done}
 
 
+@app.get("/api/campaigns")
+def campaigns():
+    """The four epidemiological protocols the title screen offers."""
+    return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "target": c.target,
+             "simulated": True} for c in CAMPAIGNS.values()]
+
+
 @app.get("/api/quests-rules")
 def quest_rulebook():
-    """Every HP, credit and score rule, so the screen can show the rulebook it is judged by."""
-    return {"encounters": quest_rules.ENCOUNTERS, "levels": quest_rules.LEVELS,
-            "abilities": quest_rules.ABILITIES, "score_components": quest_rules.SCORE_COMPONENTS, "verdicts": quest_rules.VERDICTS,
-            "starting_hp": quest_rules.STARTING_HP, "starting_credits": quest_rules.STARTING_CREDITS,
-            "pass_heal": quest_rules.PASS_HEAL, "concede_damage": quest_rules.CONCEDE_DAMAGE}
+    """Every HP, credit, damage and score rule, so the screen can show the rulebook it is judged by."""
+    return {"levels": epi_rules.LEVELS, "abilities": epi_rules.ABILITIES, "enemies": epi_rules.ENEMIES,
+            "d_max": epi_rules.D_MAX, "score_weights": epi_rules.SCORE_WEIGHTS, "score_rules": epi_rules.SCORE_RULES,
+            "verdicts": epi_rules.VERDICTS, "archetypes": ARCHETYPES,
+            "starting_hp": epi_rules.STARTING_HP, "starting_credits": epi_rules.STARTING_CREDITS}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend" / "src", html=True), name="ui")

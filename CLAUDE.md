@@ -26,3 +26,8 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - Cross-validation folds are split by participant_id, never by meal.
 - Every number the UI shows comes from the ledger (data/runs/*.jsonl).
 - Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/*.test.js
+
+## The Gauntlet (Epidemiology Edition): rules for editing backend/app/epi
+- Agents (agents.py) only choose abilities. Only judge.py measures; only campaign.py applies the damage rules in rules.py.
+- Every campaign is a simulated world (scenario.py) with planted truths: never present its results as real findings.
+- After changing the engine, re-record the demos: .venv/bin/python scripts/run_epi.py all --out frontend/src/demo --quiet

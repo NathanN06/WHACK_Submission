@@ -87,26 +87,31 @@ SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'meal_respo
 
 Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.connect('data/whack.duckdb').sql('FROM meal_responses LIMIT 5'))"`
 
-## Getting started: the Hypothesis Gauntlet
+## Getting started: the Hypothesis Gauntlet (Computational Epidemiology Edition)
 
-The app is a pixel-art dungeon crawl where AI researchers defend hypotheses through four
-levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of
-Truth). Every fight is a real, deterministic statistical test; rules and HP weights are in
-[docs/gauntlet-rules.md](docs/gauntlet-rules.md).
+Four AI epidemiologists race to predict hospital surges from outside signals through four levels of
+evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of Truth). A deterministic
+Statistical Judge measures every claim; the agents only choose abilities. Only a signal that beats the
+hospital-only AR(4) baseline on real-time data at surge onset, by a margin unlikely to be luck, wins.
+Rules, formulas and HP weights: [docs/gauntlet-rules.md](docs/gauntlet-rules.md).
+
+**The four campaigns are simulated** surveillance worlds with planted, known effects (revealed in the
+brief). They are not real public health findings.
 
 ```bash
 .venv/bin/uvicorn app.main:app --app-dir backend --port 8000   # then open http://localhost:8000
 ```
 
-- **Begin the quest** runs on `data/whack.duckdb` (build it first, see above). With
-  `ANTHROPIC_API_KEY` in `.env`, Claude plays the Researcher and the Skeptic; otherwise scripted agents do.
-- **Watch a recorded quest** plays `frontend/src/demo-quest.jsonl`, a run on synthetic meals with
-  known truth. It needs no server: `cd frontend/src && python3 -m http.server`, then open `index.html?demo`.
-- Command line: `.venv/bin/python scripts/run_gauntlet.py --synthetic` (or without `--synthetic` for real data).
-- After level IV the champion walks into the Overworld and delivers the final report: winner and why,
-  HP per level, damage by weakness, evidence contributions from real ablations, and a consensus that
-  cites the exact encounters. If nothing validates, the verdict is **Inconclusive**.
-- In the game: Exit quest (stops a live quest), Pause/Resume (Space), 1×/2×/4×, Skip level, Replay, Tutorial, Reduce motion, and a
-  **Ledger view** of every encounter with its raw numbers. `?quest=<id>` reopens a live quest.
+- Pick a campaign (A to D) on the Epidemiological Protocol Selector. **Begin** runs it live; with
+  `ANTHROPIC_API_KEY` in `.env` you can let Claude play the four agents, otherwise they follow scripted plans.
+- **Watch the recorded run** plays `frontend/src/demo/demo-<letter>.jsonl` and needs no server:
+  `cd frontend/src && python3 -m http.server`, then open `index.html#watch=A`.
+- Command line: `.venv/bin/python scripts/run_epi.py A` (or `all --out frontend/src/demo` to re-record the demos).
+- Split screen: battle stage, combat console (Run/Pause, 1×/2×/4×, Step, Skip level, Exit) and, on the
+  right, the Test Inspector (test, chart, formula, the HP clamp, the telemetry record; a vintage/hindsight
+  toggle on the Chronolock) above a filterable append-only ledger.
+- After level IV the Situation Room shows the Operational Public Health Decision Brief: decision,
+  evidence with encounter citations, what misled the others, uncertainty, the composite score, HP per
+  level, damage by trap, and the planted truth.
 
 Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

@@ -1,0 +1,61 @@
+// The reducer folds a recorded ledger into the game state; every number must match the ledger.
+const test = require("node:test");
+const assert = require("node:assert");
+const fs = require("node:fs");
+const path = require("node:path");
+const { replay, initial, reduce, nodeStates, filterEvents, beat, findEncounter } = require("../src/epi-state.js");
+
+const load = (L) => fs.readFileSync(path.join(__dirname, `../src/demo/demo-${L}.jsonl`), "utf8")
+  .split("\n").filter(Boolean).map((l) => JSON.parse(l));
+
+for (const L of ["A", "B", "C", "D"]) {
+  test(`campaign ${L} replays to the finale with the ledger's numbers`, () => {
+    const events = load(L);
+    const s = replay(events);
+    const fin = events[events.length - 1];
+    assert.strictEqual(fin.action, "finale");
+    assert.strictEqual(s.finale, fin.result);
+    assert.strictEqual(s.order.length, 4);
+    for (const r of fin.result.ranking) {
+      assert.strictEqual(s.agents[r.id].hp, r.hp, `${r.name} HP`);
+      assert.strictEqual(s.agents[r.id].verdict, r.verdict);
+      assert.strictEqual(100 - s.agents[r.id].credits, r.spent, `${r.name} credits`);
+    }
+    assert.strictEqual(s.encounters, fin.result.totals.encounters);
+    assert.strictEqual(s.fallen, fin.result.totals.fallen);
+    assert.ok(nodeStates(s).every((n) => n.done));
+    assert.ok(s.simulated);
+  });
+}
+
+test("campaign C ends with the baseline holding; A crowns a validated champion", () => {
+  assert.strictEqual(replay(load("C")).finale.baseline_holds, true);
+  const a = replay(load("A")).finale;
+  assert.strictEqual(a.champion.verdict, "VALIDATED");
+});
+
+test("every brief citation points at a real encounter", () => {
+  for (const L of ["A", "B", "C", "D"]) {
+    const events = load(L), b = replay(events).finale.brief;
+    for (const ev of [...b.evidence, ...b.misleading]) assert.ok(findEncounter(events, ev.cite), `${L} ${ev.cite}`);
+  }
+});
+
+test("a partial ledger shows the level in progress", () => {
+  const events = load("A");
+  const upTo = events.findIndex((e) => e.action === "level_start" && e.level === 2);
+  const s = events.slice(0, upTo + 1).reduce(reduce, initial());
+  const nodes = nodeStates(s);
+  assert.ok(nodes[0].done && nodes[1].current && !nodes[1].done && !nodes[4].done);
+  assert.strictEqual(s.finale, null);
+});
+
+test("ledger filters", () => {
+  const events = load("A");
+  const judge = filterEvents(events, { kind: "judge" });
+  assert.ok(judge.length && judge.every((e) => e.action === "result"));
+  assert.ok(filterEvents(events, { agent: "pioneer", level: 4 }).every((e) => e.agent_id === "pioneer" && e.level === 4));
+  assert.ok(filterEvents(events, { kind: "hp" }).every((e) => e.hp_delta));
+  assert.ok(filterEvents(events, { text: "E062" }).length >= 1);
+  assert.ok(beat(events[0]) > 0);
+});

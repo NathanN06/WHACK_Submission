@@ -179,6 +179,44 @@ function flashOf(key, img) {
 function heroSprite(cls, skin) { return bake(`hero:${cls}:${skin}`, heroMap(cls), heroPalette(cls, skin)); }
 function enemySprite(kind) { const a = ENEMY_ART[kind]; return a ? bake(`enemy:${kind}`, a.map, a.pal) : null; }
 
+// ---------- the four AI epidemiologists (Epidemiology Edition), full 16-wide maps facing right ----------
+
+const EPI_ART = {
+  Nowcaster: { map: [  // neon visor, hoodie, a buzzing phone on an antenna
+    "....M.M.M.......", "...MMMMMMMM.....", "..MMMMMMMMMM....", "..MMSSSSSSMM....", "..MVVVVVVVVM....",
+    "...SSSSSSSS.....", "...SSSSKSSS.....", "....SSSSSS..A...", "...HHHHHHHH.A...", "..HHHHHHHHHHPP..",
+    "..HSHHKKHHHSPG..", "..H.HHKKHHH.PP..", "...HHHHHHHH.....", "...HHHHHHHH.....", "...JJJ..JJJ.....",
+    "...JJ....JJ.....", "..BBB....BBB....",
+  ], pal: { M: "#ff4ad8", V: "#7fe0ff", S: "#f1c9a5", K: "#2a1a2a", H: "#5a2a8a", A: "#9a96a8", P: "#15122b",
+             G: "#7fffd0", J: "#2b3f8a", B: "#1a1020" } },
+  Pioneer: { map: [  // lab coat, goggles pushed up, a glowing flask
+    "................", "....HHHHHH......", "...HHHHHHHH.....", "...HGGHHGGH.....", "...SSSSSSSS.....",
+    "...SESSSESS.....", "...SSSSSSSS.....", "....SSMMSS......", "...CCCTTCCC.....", "..CCCCTTCCCC.N..",
+    "..CSCCTTCCCS.N..", "..C.CCTTCC..LLL.", "....CCTTCC.LLWLL", "....CCCCCC..LLL.", "....DD..DD......",
+    "....DD..DD......", "...BBB..BBB.....",
+  ], pal: { H: "#3a2a1a", G: "#7fe0ff", S: "#a8714a", E: "#1a1020", M: "#6a3a2a", C: "#f3f0e8", T: "#1f8a8a",
+             N: "#c8e0ff", L: "#5fd67a", W: "#d8ffd0", D: "#2a3a4a", B: "#1a1020" } },
+  Opportunist: { map: [  // messenger cap, scarf, a freshly printed preprint
+    "................", "....KKKKKK......", "...KKKKKKKKK....", "...SSSSSSS......", "...SESSSES......",
+    "...SSSSSSS......", "....SSWSS.......", "...RRRRRRRR.....", "..OOOOOOOOOO.PP.", "..OSOOOOOOOSPPP.",
+    "..OOOOOOOOOOPLP.", "...OOOOOOOO.PLP.", "...OOOOOOOO.PPP.", "....JJ..JJ......", "....JJ..JJ......",
+    "...BBB..BBB.....",
+  ], pal: { K: "#c0294a", S: "#e8b48a", E: "#1a1020", W: "#ffffff", R: "#ffe066", O: "#d8742a", P: "#f3e9d2",
+             L: "#8a8070", J: "#4a3a2a", B: "#1a1020" } },
+  Skeptic: { map: [  // grey hood, round spectacles, a shield with a flat baseline on it
+    "................", "....HHHHHH......", "...HHHHHHHH.....", "..HHHHHHHHHH....", "..HHSSSSSSHH....",
+    "..HSGGSSGGSH....", "..HSSSSSSSSH....", "..HHSSMMSSHH....", "..HHHHHHHHHHDDDD", "..HHHHHHHHHHDIID",
+    "..HSHHHHHHHSDLLD", "..HHHHHHHHHHDIID", "...HHHHHHHH.DIID", "...HHHHHHHH..DD.", "....BB..BB......",
+    "...BBB..BBB.....",
+  ], pal: { H: "#6a6880", S: "#d9a066", G: "#e8e0c8", M: "#7a4a2e", D: "#e8b847", I: "#2b3f8a", L: "#7fe0ff",
+             B: "#2a2838" } },
+};
+
+function epiSprite(cls) {
+  const a = EPI_ART[cls];
+  return a ? bake(`epi:${cls}`, a.map.map((r) => r.padEnd(16, ".")), a.pal) : heroSprite("Wanderer", 0);
+}
+
 // Draw a sprite with its feet at (x, y). opts: flip, flash, alpha.
 function blit(ctx, img, x, y, opts = {}) {
   if (!img) return;
@@ -346,7 +384,7 @@ function drawGuardian(ctx, x, y, f) {
   return 58;
 }
 
-const BOSSES = { chimera_overfit: drawChimera, chimera_selection: drawChimera, chronolock: drawChronolock,
+const BOSSES = { chimera: drawChimera, chimera_overfit: drawChimera, chimera_selection: drawChimera, chronolock: drawChronolock,
                  reaper: drawReaper, titan: drawTitan, guardian: drawGuardian };
 // The Knight and the Sentinel are bosses' lieutenants: drawn from maps, at double weight.
 
@@ -369,4 +407,4 @@ function drawEnemy(ctx, kind, x, y, f, head, opts = {}) {
   return 16;
 }
 
-if (typeof module !== "undefined") module.exports = { mirror, HEADS, BODY, ENEMY_ART, CLASSES };
+if (typeof module !== "undefined") module.exports = { mirror, HEADS, BODY, ENEMY_ART, CLASSES, EPI_ART };

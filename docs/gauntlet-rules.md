@@ -1,115 +1,93 @@
-# Hypothesis Gauntlet: the rules
+# Hypothesis Gauntlet: Computational Epidemiology Edition, the rules
 
-The gauntlet is a game view of a real analysis. Hypothesis agents (one claim each about what
-changes the glucose rise after a meal) walk four levels of evidence. Every enemy is one
-deterministic statistical check; every HP change is one row of the table below applied to
-that check's result. The numbers live in `backend/app/gauntlet/rules.py`; this page explains
-them. Nothing here is decided by an LLM.
+Four AI epidemiologists try to predict hospital surges from outside signals (wastewater, searches,
+syndromic visits, sales, satellites). They walk four levels of evidence. Every enemy is one
+deterministic measurement by the **Statistical Judge**; every HP change is one rule below applied to
+that measurement. The numbers live in `backend/app/epi/rules.py` and `backend/app/epi/judge.py`.
+Nothing here is decided by an LLM.
 
-## Roles
+**Every campaign is simulated.** Public health data is not reachable from the build environment, so
+each campaign is a deterministic synthetic surveillance world (`backend/app/epi/scenario.py`) with
+planted, known effects. The Decision Brief reveals the planted truth so you can check the Judge.
 
-| Role | Who | What it does |
+## The four campaigns
+
+| | Campaign | Planted truth |
 |---|---|---|
-| Hypothesis agents | One per claim (8 by default) plus 4 hidden impostors | Walk the levels, pay credits, take damage |
-| Researcher | Claude (or the scripted fallback) | Proposes the claims (reusing the arena's Lanista), decides whether to pay to defend an optional challenge, may revise a claim the raw data contradicts |
-| Skeptic | Claude (or the scripted fallback) | Picks up to 2 optional challenges per agent per level |
-| Statistical Judge | `campaign.py` + `checks.py` + the arena's `engine.py` | Runs every test, applies these rules, writes the ledger |
+| A | Wastewater Bio-Surveillance | Wastewater RNA leads admissions by 7 days. Search and social streams are mostly news panic and season; lab counts are backfilled over ~3 weeks; OTC sales lead by 2 days, not 21. |
+| B | Digital Syndromic Mirage | ED syndromic visits lead RSV admissions by 6 days but jump with news coverage (de-noising removes it). Raw search and social streams follow news and the school calendar. |
+| C | Pharmacoepidemiology EHR Audit | Antiviral X does nothing. Its apparent benefit is confounding by indication and immortal-time bias. |
+| D | Environmental Heatwave & PM2.5 Surge | PM2.5 drives asthma admissions 2 days later, more weakly in rural districts. Regulatory AQI is accurate but published days late. |
 
-Claude only ever chooses among options and talks. Its replies are validated against a schema;
-anything unusable falls back to the script, and the screen says so.
+Each world has 900 days in five regions (a home city, two more cities, two rural counties).
+Days 40 to 599 train; days 600 onwards are the unseen holdout.
 
-## Resources
+## The four archetypes
 
-- **HP: 100.** HP is research integrity inside the game, not a probability that the claim is true.
-- **Research credits: 18.** The mandatory checks cost 12, so every agent can afford some optional
-  ones but not all. Running out before a mandatory test ends the quest as UNPROVEN.
-- **A passed check restores 5 HP** (never above 100), so a hypothesis can lose support and recover.
-- **Conceding a challenge costs 5 HP** and no credits: the claim stays unverified.
-
-## The encounters
-
-Mandatory ("gate") checks always run. Optional ("challenge") checks are the Skeptic's choice.
-
-| Level | Enemy | Kind | Credits | Test | HP if failed |
-|---|---|---|---|---|---|
-| 1 Rumour Dungeon | Slime of Misinformation | gate | 0 | At least 10 people have the data | leaves as UNTESTABLE |
-| 1 | Rumour Goblin | gate | 1 | Raw correlation with the rise, people-bootstrap 95% CI, vs the claimed direction | −5 if unclear, −15 if contradicted |
-| 1 | Anecdote Bat | challenge | 1 | Share of people whose own meals show the claimed direction (> 50%) | −10 |
-| 1 | Echo Chamber Wisp | challenge | 1 | \|r\| with carbs below 0.9 | −20 |
-| 2 Forgotten Archives | Preprint Mimic | gate | 2 | The arena's Trial: participant-split cross-validated error with vs without the evidence; CI must be above 0 | −30 |
-| 2 | Small Sample Skeleton | challenge | 1 | More than half of people predicted better | −10 |
-| 2 | Confounding Phantom | challenge | 1 | Raw sign survives adjusting for carbs | −10 |
-| 2 | Citation Spider | challenge | 1 | Gain below 25% of baseline error (not too good to be true) | −10 |
-| 3 Temple of Replication | Replication Sentinel | gate | 2 | Gain positive in at least 3 of 5 independent participant groups | −15 |
-| 3 | Contradiction Wraith | challenge | 2 | Same sign on both glucose sensors (only when two exist) | −15 |
-| 3 | Data Chimera: Overfitting | gate | 3 | The arena's Shuffler: permutation test, p < 0.05 | −30 |
-| 3 | Data Chimera: Selection Bias | challenge | 1 | Gain still positive without the top 10% of contributors | −10 |
-| 3 | Publication Bias Knight | gate | 0 | Benjamini-Hochberg across every claim tried in the run | −15 |
-| 4 Citadel of Truth | Chronolock Guardian | gate | 0 | Every feature known at mealtime | −40 (and LOOK-AHEAD) |
-| 4 | The Leakage Reaper | gate | 0 | No feature built from the outcome | −100 |
-| 4 | The Bureaucratic Titan | gate | 1 | Recorded for at least 10 people in the independent dataset | leaves as UNTESTABLE |
-| 4 | Guardian of False Discoveries | gate | 3 | Preregister (hash the claim), train on the discovery set, beat the baseline on never-seen people (CI above 0) | −50 |
-
-Why these weights: the size of a hit tracks how much the failure undermines a claim. Hints
-(an unclear raw link, an anecdote, a confound) cost 5–15. Failing the core tests of "adds
-something" (Mimic) and "isn't luck" (Chimera) costs 30. Using the future costs 40, failing on
-new people 50, and evidence built from the answer is fatal (100). Agents keep walking while
-they have HP, so weak claims die from accumulated evidence rather than one roll of the dice.
-
-## Verdicts
-
-- **VALIDATED**: passed the Mimic, the Chimera's overfitting test, the Knight, the Chronolock, the Reaper and the Guardian.
-- **UNSUPPORTED**: still standing, but at least one of those failed.
-- **LOOK-AHEAD**: relied on information from after the meal. Disqualified however accurate.
-- **UNTESTABLE / UNPROVEN / FALLEN**: no data to judge / out of credits / HP reached 0.
-
-If no claim is validated the finale says the evidence is inconclusive rather than crowning anyone.
-
-## Who is the best researcher
-
-The scoring rule is fixed before any run (`rules.SCORE_COMPONENTS`, computed in `gauntlet/report.py`
-from checks that already ran; nothing new is measured for the score):
-
-| Component | Max | How it is earned |
+| Agent | Archetype | Plays |
 |---|---|---|
-| Scientific validity | 20 | Share of the soundness checks passed (Trial, echo, within-person, majority, confounding); untested optional ones count half |
-| Out-of-sample performance | 25 | 25 if it beats the baseline on never-seen people (CI above 0); 8 if the gain is positive but uncertain |
-| Response to falsification tests | 20 | 10 for beating scrambled data, 5 for replicating in 3 of 5 groups, 5 for surviving selection-bias/sensor checks |
-| Handling of uncertainty | 10 | 10 if still significant after correcting for every claim tried (Benjamini-Hochberg) |
-| Detection of misleading evidence | 5 | Raw direction not contradicted (or honestly revised), and not too good to be true |
-| Avoidance of data leakage | 15 | 7.5 for mealtime-only information, 7.5 for no feature built from the outcome |
-| Research efficiency | 5 | 5 x share of checks that were neither redundant nor conceded |
-| HP bonus | 5 | 0.05 per HP left |
+| Vex | The Hype Nowcaster | Searches every digital stream at every lag 1 to 21 (K ≈ 150), no autoregressive terms, never pays for caution |
+| Imara | The Bio-Surveillance Pioneer | One mechanistic stream with a lag declared in advance; buys Bias Detection, Preregister, Replication Shield, Temporal Guard |
+| Quill | The Preprint Opportunist | A small-cohort claim with a long lead; spends almost nothing |
+| Ward | The Surveillance Skeptic | No outside signal: AR(4) on admissions plus a seasonal harmonic. The benchmark everyone must beat |
 
-- **Leakage voids the evidence.** If the Chronolock or the Reaper wins, validity, out-of-sample,
-  falsification and uncertainty all score 0: a result built on leaked information is not evidence.
-- **HP cannot override evidence.** The champion is the highest-scoring *VALIDATED* agent. Agents
-  are ranked by (validated first, score, tie-break), so no amount of HP or extra tests lets an
-  unvalidated claim win.
-- **Tie-break (predefined):** the most confident gain on unseen people, i.e. the lower end of the
-  holdout's 95% CI.
-- **Inconclusive:** if nothing is validated there is no champion, and the report says so.
-- Every agent starts with the same HP (100) and credits (18) and faces the same encounters.
+Agents only choose which abilities to cast. Scripted plans by default; with `ANTHROPIC_API_KEY` in
+`.env`, Claude plays each archetype in character and returns a JSON choice, validated against the menu
+and the agent's credits (anything invalid falls back to the script).
 
-Credits are a gameplay and efficiency measure. They are not a multiple-testing correction:
-that is the Publication Bias Knight's job.
+## Resources and the clamp
 
-## The record of every fight
+- **100 HP** (research integrity, not a probability) and **100 research credits** per agent.
+- Every hit is `ΔHP = −round(clamp(D_raw × M, 0, D_max))`, where `M` is the ability multiplier and
+  `D_max` caps each level: **I 20, II 30, III 45, IV 60** (cumulative per level).
+- Heals: Bias Detection +5, Eureka (beating the baseline in a way unlikely to be luck) +10. HP never exceeds 100.
 
-Each result or concession event carries an `encounter` record: `encounter_id`, `level`, `agent_id`,
-`hypothesis_id`, `evidence_source`, `evidence_version` (a fingerprint of the data), `enemy_type`,
-`research_action`, `test_requested`, `numerical_result`, `methodological_verdict`, `hp_change`,
-`explanation`, `timestamp`. The final report cites these ids, and the game's ledger view and
-"Inspect numbers" button show them in full.
+## The levels
 
-## Demo Mode
+| Level | Enemies (scouts measure, the rest deal damage) | Damage rule |
+|---|---|---|
+| I Rumour Dungeon | Slime (n and r), Echo Chamber Wisp (panic windows, news > mean + 2 sd), **Rumour Goblin** (FAAR), **Anecdote Bat** (power) | `12 × max(0, FAAR − 1) + 18 × ρ_n`, where FAAR = error in panic windows / error elsewhere and ρ_n = max(0, 1 − n / n_min), n_min = (2.80 / atanh\|r\|)² + 3 |
+| II Forgotten Archives | Preprint Mimic (r_XY), Citation Spider (r_XZ, r_YZ), **Confounding Phantom** (ω), **Small Sample Skeleton** (adjusted p) | `22 × ω + 10 × I(p_adj > 0.05)`, ω = max(0, 1 − r²_XY·Z / r²_XY); p_adj is a Newey-West (lag 14) Wald test with the confounder in the model |
+| III Temple of Replication | **Publication Bias Knight** (`min(20, 5 ln K)`), **Replication Sentinel** (Šidák `p_corr = 1 − (1 − p_raw)^K`), Contradiction Wraith, **Data Chimera** (G_spatial) | `25 × I(p_raw < .05 and p_corr > .05) + min(20, 5 ln K) + min(25, 20 × max(0, G))`, G = worst relative growth of normalized RMSE in the four held-out regions |
+| IV Citadel of Truth | Bureaucratic Titan (vintage audit), Leakage Reaper (look-ahead lags), **Chronolock Guardian**, **Guardian of False Discoveries** | Chronolock: `35 × I(used unreleased data) + min(25, round(40 × max(0, δ_vintage)))`. Guardian: SS_surge = 1 − RMSE_agent / RMSE_AR(4) on surge-onset days (admissions up ≥ 15% on the week), one-sided Diebold-Mariano with the Harvey correction. Gain (SS > 0.05, p < .05): 0 damage and Eureka. Loss (SS < −0.05): `min(50, 25 + 150 × \|SS\|)`. Otherwise 15 |
 
-`frontend/src/demo-quest.jsonl` is a recorded quest on synthetic meals with planted, known effects
-(regenerate with `scripts/run_gauntlet.py --synthetic --perm 200 --theory "..." --out frontend/src/demo-quest.jsonl`).
-The HUD shows a DEMO MODE badge and the report carries a disclaimer: these are not real findings.
+The Skeptic is the benchmark, so it does not fight the Guardian.
 
-## Impostors
+## Abilities
 
-Four hidden agents are planted decoys from the arena: pure noise, the luckiest of 100 noise
-columns, a copy of carbs, and a score built from the outcome. They look like ordinary agents
-until the finale. A gauntlet that validates any of them is broken.
+| Ability | Level | Credits | Effect |
+|---|---|---|---|
+| Fact Check | I | 10 | Purges media-spike weeks: M = 0.20 for Rule 1 |
+| Media De-Noising Filter | I | 20 | Regresses news volume out of each stream for every later level |
+| Exploratory Claim | I | 5 | Declares the claim exploratory: M = 0.50 for Rule 1 |
+| Bias Detection | II | 15 | Puts the confounder in the model: ω = 0, +5 HP |
+| Preregister | III | 25 | Locks one declared lag: K = 1 (only for a lag declared before looking) |
+| Replication Shield | III | 25 | Ridge shrinkage, penalty tuned by time-blocked CV in the home region |
+| Temporal Guard | IV | 20 | Trains on vintages with a reporting-delay correction: no leakage penalty |
+| Ablation Strike | IV | 15 | Drops every stream that does not lower validation error |
+
+Exploratory Claim and Ablation Strike are our additions so the Preprint Opportunist and the Skeptic
+have a signature move. Loot: the Raw Artefact (unfiltered digital streams), the Incubation Priors
+Blueprint (passing the Small Sample Skeleton with a lag window inside the biologically plausible
+range caps K at that range in level III), and the
+Preregistered Lockbox.
+
+## Verdicts, score and the brief
+
+- **VALIDATED**: SS_surge > 0 and Diebold-Mariano p < 0.05. (Stricter than "SS > 0" on purpose:
+  a gain that could be luck does not count.)
+- **NOT BETTER**: survived but did not beat the baseline. **BASELINE**: the Skeptic. **FALLEN**: 0 HP.
+- Composite score = 0.35 × Norm(SS) + 0.25 × HP + 0.25 × % traps falsified + 0.15 × efficiency,
+  with Norm = 100 × clamp(SS / 0.30, 0, 1) and efficiency = min(100, 100 × ablation lift % / max(10, credits spent)).
+- The champion is the highest-scoring VALIDATED agent. If none, the verdict is **Baseline Holds:
+  inconclusive**.
+- The Operational Public Health Decision Brief cites every claim to its encounter id (`E###`).
+
+## Telemetry
+
+Every fight writes one ledger row (`data/quests/*.jsonl`) carrying an `EpiEncounterTelemetry` record:
+`encounterId, campaignType, level, enemyName, epiTrapType, agentId, agentAction`,
+`biostatMetrics {sampleSizeN, minRequiredN, unadjustedEffect, adjustedEffect, confounderName,
+candidateLagsSearchedK, rawPValue, sidakCorrectedPValue, hindsightRmse, vintageRealTimeRmse,
+arBaselineRmse, outOfSampleSurgeSkill}` and `combatResolution {rawDamage, abilityMultiplier,
+clampedHpDelta, executedFormulaLatex, plainEnglishEpiVerdict}`.

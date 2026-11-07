@@ -166,3 +166,48 @@ def penalty(pvalues: dict[str, float], alpha: float = config.ALPHA) -> dict[str,
     adj[order] = adj_sorted
     return {i: {"p": float(p[j]), "p_adj": float(adj[j]), "m": m, "passed": bool(adj[j] < alpha)}
             for j, i in enumerate(ids)}
+
+
+def sensor_check(frames: dict[str, pd.DataFrame], g: Gladiator, n_boot: int = 200, seed: int = 0) -> dict:
+    """The Twins: the same claim, measured by each glucose sensor separately."""
+    by_sensor = {}
+    for name, frame in frames.items():
+        r = added_value(frame, g, n_boot=n_boot, seed=seed)
+        by_sensor[name] = None if r.get("untestable") else round(r["gain"], 3)
+    gains = [v for v in by_sensor.values() if v is not None]
+    if len(gains) < 2:
+        return {"passed": False, "untestable": True, "by_sensor": by_sensor,
+                "reason": "needs two sensors with data"}
+    return {"by_sensor": by_sensor, "passed": bool(all(v > 0 for v in gains))}
+
+
+def leak_audit(g: Gladiator, registry: dict[str, Feature]) -> dict:
+    """The Inquisitor: is any feature built from the outcome itself?"""
+    leaky = [f for f in g.add_features if f in registry and registry[f].available == "outcome"]
+    unknown = [f for f in g.add_features if f not in registry]
+    return {"leaky": leaky, "unknown": unknown, "passed": not leaky and not unknown}
+
+
+def final_boss(train: pd.DataFrame, test: pd.DataFrame, g: Gladiator,
+               n_boot: int = config.N_BOOT, seed: int = 0) -> dict:
+    """The Champion of Brno: train on CGMacros, score on people never seen."""
+    missing = [c for c in (*g.add_features, *g.baseline_features, g.target) if c not in test.columns]
+    if missing:
+        return _untestable(0, f"not measured in the holdout: {missing}")
+    tr, te = _clean(train, g), _clean(test, g)
+    n_people = te[PID].nunique()
+    if n_people < config.MIN_PARTICIPANTS:
+        return _untestable(n_people, f"only {n_people} holdout people have this data")
+    base, full = _columns(g)
+    y_tr, y_te = tr[g.target].to_numpy(float), te[g.target].to_numpy(float)
+    err_b = np.abs(y_te - _fit_predict(tr[base].to_numpy(float), y_tr, te[base].to_numpy(float)))
+    err_f = np.abs(y_te - _fit_predict(tr[full].to_numpy(float), y_tr, te[full].to_numpy(float)))
+    gains = pd.Series(err_b - err_f).groupby(te[PID].to_numpy()).mean().to_numpy()
+    lo, hi = _bootstrap_ci(gains, n_boot, seed)
+    return {
+        "gain": float(gains.mean()),
+        "ci_low": lo,
+        "ci_high": hi,
+        "n_participants": int(n_people),
+        "passed": bool(lo > 0),
+    }

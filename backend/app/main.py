@@ -11,9 +11,10 @@ from typing import Literal
 
 from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .arena.agents import make_agents
+from .arena.agents import RosterLanista, default_roster, make_agents
+from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
 
@@ -37,7 +38,15 @@ def frames():
     return _frames
 
 
+class RosterEntry(BaseModel):
+    claim: str = Field(min_length=1, max_length=200)
+    add_features: list[str] = Field(min_length=1, max_length=2)
+    expected_direction: Literal["positive", "negative", "either"] = "either"
+
+
 class RunRequest(BaseModel):
+    roster: dict[int, list[RosterEntry]] | None = None  # day -> the hypotheses you let in
+    max_per_day: int = Field(5, ge=1, le=10)
     emperor: Literal["real", "fake"] | None = None
     llm: bool = False
     replay: str | None = None
@@ -72,13 +81,24 @@ def start_run(req: RunRequest):
     else:
         train, test, sensors = frames()
         lanista, sceptic = make_agents(req.llm)
+        if req.roster is not None:
+            lanista = RosterLanista({day: [e.model_dump() for e in items]
+                                     for day, items in req.roster.items()}, base=lanista)
         ledger = Ledger(run_id, RUNS)
         arena = Arena(run_id, train, test, sensors, lanista, sceptic, ledger,
-                      emperor=req.emperor, seed=req.seed, pace=req.pace)
+                      emperor=req.emperor, seed=req.seed, pace=req.pace, k=req.max_per_day)
         thread = threading.Thread(target=arena.run, daemon=True)
     thread.start()
     _runs[run_id] = {"ledger": ledger, "thread": thread}
     return {"run_id": run_id}
+
+
+@app.get("/api/roster")
+def roster():
+    """Each day's features and the pre-filled hypotheses the roster editor starts from."""
+    train, _, _ = frames()
+    catalog = public_catalog(default_registry(), 3, set(train.columns))
+    return {"days": default_roster(catalog), "max_per_day": 5}
 
 
 @app.get("/api/runs")

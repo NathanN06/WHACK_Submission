@@ -35,6 +35,19 @@
     <span class="replay"><select id="runs"></select><button id="replay">Replay</button></span>
   </section>
 
+  <details class="roster" id="roster" open>
+    <summary>
+      <span class="roster-title">The Lanista's roster</span>
+      <span class="roster-hint">Edit the hypotheses, tick who enters each day</span>
+    </summary>
+    <div class="roster-bar">
+      <label>Max per day <input id="max-per-day" type="number" min="1" max="10" value="5"></label>
+      <button id="roster-reset" type="button">Reset to defaults</button>
+      <span id="roster-note" role="status"></span>
+    </div>
+    <div class="roster-days" id="roster-days"><p class="roster-empty">Loading the roster…</p></div>
+  </details>
+
   <main>
     <div class="lanes">
       <section class="lane" data-lane="tunnel"><h2>The Tunnel</h2><div class="cards"></div></section>
@@ -60,6 +73,7 @@
   <dialog id="summary"></dialog>
 
   <script src="arena-state.js"></script>
+  <script src="roster.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

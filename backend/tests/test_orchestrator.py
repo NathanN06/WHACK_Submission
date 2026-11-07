@@ -178,3 +178,13 @@ def test_the_crowd_is_told_when_claude_is_not_answering(tmp_path):
     notices = [e.line for e in a.ledger.events if e.action == "fallback"]
     assert len(notices) == 2  # once per agent, not once per call
     assert any("Lanista" in n for n in notices) and any("Sceptic" in n for n in notices)
+
+
+def test_max_per_day_caps_how_many_enter(tmp_path):
+    from app.arena.agents import RosterLanista
+    roster = {2: [{"claim": "fibre", "add_features": ["fiber"]},
+                  {"claim": "fat", "add_features": ["fat"]},
+                  {"claim": "protein", "add_features": ["protein"]}]}
+    a = arena(tmp_path, lanista=RosterLanista(roster), k=2)
+    a.play_day(2)
+    assert [s.gladiator.claim for s in a.states.values()] == ["fibre", "fat"]

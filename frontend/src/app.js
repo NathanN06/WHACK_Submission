@@ -107,13 +107,115 @@ async function playFile(url) {
   }
 }
 
+// ---------- the roster editor ----------
+
+let rosterDefaults = null;
+let roster = null;
+
+function option(value, label, selected) {
+  return `<option value="${esc(value)}"${selected ? " selected" : ""}>${esc(label)}</option>`;
+}
+
+function renderRoster() {
+  if (!roster) return;
+  $("#roster-days").innerHTML = roster.days.map((d, di) => {
+    const rows = d.rows.map((r, ri) => `
+      <div class="roster-row${r.on ? "" : " off"}" data-day="${di}" data-row="${ri}">
+        <input type="checkbox" data-field="on" ${r.on ? "checked" : ""} aria-label="Let this one in">
+        <textarea data-field="claim" rows="2" maxlength="200" placeholder="Your hypothesis">${esc(r.claim)}</textarea>
+        <button type="button" class="remove" data-action="remove" aria-label="Remove">✕</button>
+        <div class="feats">
+          <select data-field="f1" aria-label="Feature">${d.features.map((f) => option(f, f, f === r.f1)).join("")}</select>
+          <select data-field="f2" aria-label="Second feature">${option("", "+ no second feature", !r.f2)}${
+            d.catalog.filter((f) => f.name !== "carbs" || d.day === 1).map((f) => option(f.name, f.name, f.name === r.f2)).join("")}</select>
+        </div>
+      </div>`).join("");
+    return `<section class="roster-day">
+      <h3>${esc(d.name)}<span>${ticked(roster, di)} of max ${roster.max} in</span></h3>
+      ${rows || `<p class="roster-empty">Nobody fights today.</p>`}
+      <button type="button" class="roster-add" data-action="add" data-day="${di}">+ Add a hypothesis</button>
+    </section>`;
+  }).join("");
+}
+
+function note(text) {
+  $("#roster-note").textContent = text;
+  if (text) setTimeout(() => { if ($("#roster-note").textContent === text) $("#roster-note").textContent = ""; }, 3000);
+}
+
+async function loadRoster() {
+  try {
+    const body = await (await fetch("/api/roster")).json();
+    rosterDefaults = body;
+    roster = initRoster(body.days, Number($("#max-per-day").value) || body.max_per_day);
+    renderRoster();
+  } catch {
+    $("#roster-days").innerHTML = `<p class="roster-empty">No API, so no roster. Games use the built-in Lanista.</p>`;
+  }
+}
+
+$("#roster-days").addEventListener("input", (ev) => {
+  const row = ev.target.closest(".roster-row");
+  if (!row || !roster) return;
+  const r = roster.days[row.dataset.day].rows[row.dataset.row];
+  const field = ev.target.dataset.field;
+  if (field === "claim") r.claim = ev.target.value;  // no redraw: keep the cursor where it is
+  if (field === "f1" || field === "f2") r[field] = ev.target.value;
+});
+
+$("#roster-days").addEventListener("change", (ev) => {
+  const row = ev.target.closest(".roster-row");
+  if (!row || !roster || ev.target.dataset.field !== "on") return;
+  const di = Number(row.dataset.day);
+  const r = roster.days[di].rows[row.dataset.row];
+  if (ev.target.checked && !canTick(roster, di)) {
+    ev.target.checked = false;
+    note(`Only ${roster.max} per day. Untick one first, or raise the max.`);
+    return;
+  }
+  r.on = ev.target.checked;
+  renderRoster();
+});
+
+$("#roster-days").addEventListener("click", (ev) => {
+  const action = ev.target.dataset.action;
+  if (!action || !roster) return;
+  if (action === "add") {
+    const di = Number(ev.target.dataset.day);
+    const d = roster.days[di];
+    d.rows.push({ claim: "", f1: d.features[0], f2: "", on: canTick(roster, di) });
+    renderRoster();
+    const boxes = document.querySelectorAll(`.roster-row[data-day="${di}"] textarea`);
+    boxes[boxes.length - 1]?.focus();
+  }
+  if (action === "remove") {
+    const row = ev.target.closest(".roster-row");
+    roster.days[row.dataset.day].rows.splice(Number(row.dataset.row), 1);
+    renderRoster();
+  }
+});
+
+$("#max-per-day").addEventListener("change", () => {
+  const n = Math.max(1, Math.min(10, Math.round(Number($("#max-per-day").value)) || 1));
+  $("#max-per-day").value = n;
+  if (roster) { setMax(roster, n); renderRoster(); }
+});
+
+$("#roster-reset").addEventListener("click", () => {
+  if (!rosterDefaults) return;
+  roster = initRoster(rosterDefaults.days, Number($("#max-per-day").value) || 5);
+  renderRoster();
+});
+
 $("#seal").addEventListener("click", () => $(".emperor").classList.toggle("sealed"));
 
 $("#start").addEventListener("click", async () => {
   const emperor = document.querySelector("input[name=emperor]:checked").value || null;
   $("#start").disabled = true;
   try {
-    const { run_id } = await post("/api/runs", { emperor, llm: $("#llm").checked });
+    const lineup = roster ? toPayload(roster) : {};
+    const { run_id } = await post("/api/runs", { emperor, llm: $("#llm").checked, ...lineup });
+    $("#roster").open = false;  // make room for the fight
     await follow(run_id);
   } catch (err) {
     alert(`Could not start: ${err.message}`);
@@ -144,5 +246,6 @@ $("#theory").addEventListener("submit", async (ev) => {
 });
 
 loadRuns();
+loadRoster();
 const offline = new URLSearchParams(location.search).get("file");
 if (offline) playFile(offline);

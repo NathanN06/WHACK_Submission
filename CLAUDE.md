@@ -25,4 +25,4 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - Agents never produce numbers, p-values or verdicts. Only engine.py measures; only referee.py rules.
 - Cross-validation folds are split by participant_id, never by meal.
 - Every number the UI shows comes from the ledger (data/runs/*.jsonl).
-- Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/arena-state.test.js
+- Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/*.test.js

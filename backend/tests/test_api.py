@@ -71,3 +71,25 @@ def test_done_is_decided_before_reading_events(client):
 
     main._runs["race"] = {"ledger": Ledger(), "thread": thread}
     assert client.get("/api/runs/race/events").json()["done"] is False
+
+
+def test_roster_endpoint_lists_days_features_and_defaults(client):
+    days = client.get("/api/roster").json()["days"]
+    assert [d["day"] for d in days] == [1, 2, 3]
+    assert "fiber" in days[1]["features"] and days[1]["hypotheses"]
+    assert all(f["name"] for d in days for f in d["catalog"])
+
+
+def test_a_game_plays_your_roster(client):
+    roster = {"1": [{"claim": "Carbs drive it", "add_features": ["carbs"]}],
+              "2": [{"claim": "My fibre hunch", "add_features": ["fiber"]}], "3": []}
+    run_id = client.post("/api/runs", json={"roster": roster, "max_per_day": 3, "pace": 0}).json()["run_id"]
+    proposed = [e["line"] for e in wait_for(client, run_id)
+                if e["action"] == "propose" and e["actor"] == "lanista"]
+    assert proposed == ["Carbs drive it", "My fibre hunch"]
+
+
+def test_roster_requests_are_bounded(client):
+    assert client.post("/api/runs", json={"max_per_day": 0}).status_code == 422
+    too_many = {"2": [{"claim": "x", "add_features": ["fiber", "fat", "sugar"]}]}
+    assert client.post("/api/runs", json={"roster": too_many}).status_code == 422

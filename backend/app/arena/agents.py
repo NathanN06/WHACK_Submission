@@ -82,6 +82,48 @@ class ScriptedLanista:
         return Gladiator(id="new", claim=text.strip()[:140], add_features=hits[:2], origin="crowd")
 
 
+class RosterLanista:
+    """You are the Lanista: each day it sends in exactly the hypotheses you wrote and ticked.
+
+    Backing decisions and crowd theories are left to `base` (scripted or Claude).
+    """
+
+    def __init__(self, roster: dict, base=None):
+        self.roster = {int(day): list(items) for day, items in roster.items()}
+        self.base = base or ScriptedLanista()
+
+    @property
+    def fallbacks(self) -> int:
+        return getattr(self.base, "fallbacks", 0)
+
+    def propose(self, day, catalog, graveyard, k):
+        return [Gladiator(id="new", claim=h["claim"], add_features=list(h["add_features"]), day=day,
+                          expected_direction=h.get("expected_direction", "either"))
+                for h in self.roster.get(day, [])][:k]
+
+    def decide(self, state):
+        return self.base.decide(state)
+
+    def theory(self, text, catalog):
+        return self.base.theory(text, catalog)
+
+
+def default_roster(catalog: list[dict], days=(1, 2, 3)) -> list[dict]:
+    """What the roster editor starts from: per day, the features on offer and the scripted ideas."""
+    out = []
+    for day in days:
+        ideas = ScriptedLanista().propose(day, catalog, [], k=99)
+        out.append({
+            "day": day,
+            "name": config.DAY_NAMES[day],
+            "features": [f["name"] for f in catalog if f["day"] == day],
+            "catalog": [f for f in catalog if f["day"] <= day],
+            "hypotheses": [{"claim": g.claim, "add_features": g.add_features,
+                            "expected_direction": g.expected_direction} for g in ideas],
+        })
+    return out
+
+
 class ScriptedSceptic:
     ORDER = ("shuffle_test", "sensor_check", "leak_audit")
 

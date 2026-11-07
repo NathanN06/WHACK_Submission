@@ -103,3 +103,17 @@ def test_api_key_is_read_from_dotenv(tmp_path, monkeypatch):
     agents.load_env_key(tmp_path / ".env")
     import os
     assert os.environ["ANTHROPIC_API_KEY"] == "sk-test-123"
+
+
+def test_roster_lanista_sends_exactly_the_hypotheses_you_wrote():
+    roster = {2: [{"claim": "My fibre idea", "add_features": ["fiber"]}]}
+    out = agents.RosterLanista(roster).propose(2, CATALOG, [], k=5)
+    assert [(g.claim, g.add_features, g.origin) for g in out] == [("My fibre idea", ["fiber"], "researcher")]
+    assert agents.RosterLanista(roster).propose(3, CATALOG, [], k=5) == []  # nothing ticked that day
+
+
+def test_default_roster_is_the_scripted_proposals():
+    days = agents.default_roster(CATALOG)
+    assert [d["day"] for d in days] == [1, 2, 3]
+    assert [h["add_features"] for h in days[1]["hypotheses"]] == [["fiber"], ["fat"]]
+    assert days[1]["features"] == ["fiber", "fat"]  # unlocked that day

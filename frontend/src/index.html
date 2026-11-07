@@ -23,15 +23,8 @@
   </header>
 
   <section class="controls">
-    <fieldset class="emperor">
-      <legend>The Emperor's secret gladiator</legend>
-      <label><input type="radio" name="emperor" value="real"> Real</label>
-      <label><input type="radio" name="emperor" value="fake"> Fake</label>
-      <label><input type="radio" name="emperor" value="" checked> None</label>
-      <button id="seal" type="button">Seal the choice</button>
-    </fieldset>
-    <label class="toggle"><input type="checkbox" id="llm"> Claude plays the Lanista and Sceptic</label>
     <button id="start" class="primary">Open the gates</button>
+    <span id="who-plays" class="badge">Checking for Claude…</span>
     <span class="replay"><select id="runs"></select><button id="replay">Replay</button></span>
   </section>
 

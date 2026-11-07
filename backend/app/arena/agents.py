@@ -313,8 +313,17 @@ def load_env_key(path: str | os.PathLike = ".env") -> None:
             return
 
 
+ENV_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
+
+
+def llm_available(env_file: str | os.PathLike = ENV_FILE) -> bool:
+    """Claude plays whenever an API key is set (in the shell or in .env)."""
+    load_env_key(env_file)
+    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+
+
 def make_agents(use_llm: bool) -> tuple[Lanista, Sceptic]:
-    load_env_key(os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env"))
+    load_env_key(ENV_FILE)
     if not use_llm:
         return ScriptedLanista(), ScriptedSceptic()
     # No temperature: the installed SDK's messages.create() rejects it, which silently

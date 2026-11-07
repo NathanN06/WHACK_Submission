@@ -3,7 +3,7 @@
 const $ = (sel) => document.querySelector(sel);
 const esc = (t) => String(t ?? "").replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 const GOOD = new Set(["SURVIVOR", "CHAMPION"]);
-const WHO = { lanista: "Lanista", sceptic: "Sceptic", engine: "Arena", system: "Arena", emperor: "Emperor", crowd: "Crowd" };
+const WHO = { lanista: "Lanista", sceptic: "Sceptic", engine: "Arena", system: "Arena", emperor: "Decoy", crowd: "Crowd" };
 
 let state = initialState();
 let following = 0;
@@ -207,14 +207,22 @@ $("#roster-reset").addEventListener("click", () => {
   renderRoster();
 });
 
-$("#seal").addEventListener("click", () => $(".emperor").classList.toggle("sealed"));
+async function loadStatus() {
+  try {
+    const { claude } = await (await fetch("/api/status")).json();
+    $("#who-plays").textContent = claude ? "Claude is playing the Lanista and Sceptic"
+                                         : "Scripted players (no API key in .env)";
+    $("#who-plays").classList.toggle("on", claude);
+  } catch {
+    $("#who-plays").textContent = "Offline replay";
+  }
+}
 
 $("#start").addEventListener("click", async () => {
-  const emperor = document.querySelector("input[name=emperor]:checked").value || null;
   $("#start").disabled = true;
   try {
     const lineup = roster ? toPayload(roster) : {};
-    const { run_id } = await post("/api/runs", { emperor, llm: $("#llm").checked, ...lineup });
+    const { run_id } = await post("/api/runs", lineup);
     $("#roster").open = false;  // make room for the fight
     await follow(run_id);
   } catch (err) {
@@ -237,7 +245,7 @@ $("#theory").addEventListener("submit", async (ev) => {
   if (!text) return;
   $("#theory-result").textContent = "The crowd's gladiator enters the arena…";
   try {
-    const body = await post("/api/theory", { text, llm: $("#llm").checked });
+    const body = await post("/api/theory", { text });
     const lines = body.events.filter((e) => e.line && e.actor !== "system").map((e) => esc(e.line));
     $("#theory-result").innerHTML = `<strong>${esc(body.verdict || "No feature matched")}</strong><br>${lines.join("<br>")}`;
   } catch (err) {
@@ -247,5 +255,6 @@ $("#theory").addEventListener("submit", async (ev) => {
 
 loadRuns();
 loadRoster();
+loadStatus();
 const offline = new URLSearchParams(location.search).get("file");
 if (offline) playFile(offline);

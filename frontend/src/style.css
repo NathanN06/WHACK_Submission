@@ -36,9 +36,8 @@ header {
   display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding: 12px 24px;
   background: var(--sand-deep);
 }
-.emperor { border: 1px solid var(--stone); border-radius: var(--radius); padding: 4px 12px 8px; }
-.emperor legend { font-size: 13px; padding: 0 4px; }
-.emperor.sealed label { visibility: hidden; }
+.badge { font-size: 13px; padding: 3px 10px; border-radius: 999px; border: 1px solid var(--stone); background: var(--card); }
+.badge.on { border-color: var(--laurel); color: var(--laurel); }
 button, select, input { font: inherit; }
 button {
   border: 1px solid var(--ink); background: var(--card); border-radius: 8px; padding: 6px 14px; cursor: pointer;

@@ -93,3 +93,14 @@ def test_roster_requests_are_bounded(client):
     assert client.post("/api/runs", json={"max_per_day": 0}).status_code == 422
     too_many = {"2": [{"claim": "x", "add_features": ["fiber", "fat", "sugar"]}]}
     assert client.post("/api/runs", json={"roster": too_many}).status_code == 422
+
+
+def test_claude_is_used_automatically_when_a_key_exists(client, monkeypatch):
+    used = []
+    real = main.make_agents
+    monkeypatch.setattr(main, "make_agents", lambda llm: used.append(llm) or real(False))
+    for available in (True, False):
+        monkeypatch.setattr(main, "llm_available", lambda: available)
+        assert client.get("/api/status").json() == {"claude": available}
+        wait_for(client, client.post("/api/runs", json={"pace": 0}).json()["run_id"])
+    assert used == [True, False]

@@ -142,3 +142,11 @@ def test_claude_calls_only_use_arguments_the_sdk_accepts(monkeypatch):
     monkeypatch.setitem(sys.modules, "anthropic", fake)
     lanista, sceptic = agents.make_agents(True)
     assert lanista.complete("sys", "user") == "hi" and sceptic.complete("sys", "user") == "hi"
+
+
+def test_claude_is_available_only_with_a_key(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=\n")
+    assert agents.llm_available(tmp_path / ".env") is False
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=sk-ant-x\n")
+    assert agents.llm_available(tmp_path / ".env") is True

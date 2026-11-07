@@ -13,7 +13,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 
-from .arena.agents import RosterLanista, default_roster, make_agents
+from .arena.agents import RosterLanista, default_roster, llm_available, make_agents
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
@@ -48,7 +48,7 @@ class RunRequest(BaseModel):
     roster: dict[int, list[RosterEntry]] | None = None  # day -> the hypotheses you let in
     max_per_day: int = Field(5, ge=1, le=10)
     emperor: Literal["real", "fake"] | None = None
-    llm: bool = False
+    llm: bool | None = None  # None = Claude if an API key is set
     replay: str | None = None
     pace: float = 0.35
     seed: int = 0
@@ -56,7 +56,11 @@ class RunRequest(BaseModel):
 
 class TheoryRequest(BaseModel):
     text: str
-    llm: bool = False
+    llm: bool | None = None
+
+
+def _use_llm(requested: bool | None) -> bool:
+    return llm_available() if requested is None else requested
 
 
 def _new_id(prefix: str) -> str:
@@ -80,7 +84,7 @@ def start_run(req: RunRequest):
         thread = threading.Thread(target=_replay, args=(ledger, source, req.pace), daemon=True)
     else:
         train, test, sensors = frames()
-        lanista, sceptic = make_agents(req.llm)
+        lanista, sceptic = make_agents(_use_llm(req.llm))
         if req.roster is not None:
             lanista = RosterLanista({day: [e.model_dump() for e in items]
                                      for day, items in req.roster.items()}, base=lanista)
@@ -91,6 +95,11 @@ def start_run(req: RunRequest):
     thread.start()
     _runs[run_id] = {"ledger": ledger, "thread": thread}
     return {"run_id": run_id}
+
+
+@app.get("/api/status")
+def status():
+    return {"claude": llm_available()}
 
 
 @app.get("/api/roster")
@@ -123,7 +132,7 @@ def run_events(run_id: str, after: int = 0):
 @app.post("/api/theory")
 def test_theory(req: TheoryRequest):
     train, test, sensors = frames()
-    lanista, sceptic = make_agents(req.llm)
+    lanista, sceptic = make_agents(_use_llm(req.llm))
     run_id = _new_id("t")
     arena = Arena(run_id, train, test, sensors, lanista, sceptic, Ledger(run_id, RUNS), n_perm=100)
     state = arena.exhibition(req.text)

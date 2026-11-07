@@ -30,7 +30,7 @@ REPUTATION_GAIN_ON_CHAMPION = 15
 ALPHA = 0.05
 N_SPLITS = 5
 N_BOOT = 1000
-N_PERM = 200
+N_PERM = 500  # smallest p = 1/501; the Census needs room to multiply it by every claim tried
 MIN_PARTICIPANTS = 10
 REDUNDANT_CORR = 0.15  # standalone |r| at or above this, but no added value -> REDUNDANT
 TOO_GOOD_GAIN_SHARE = 0.25  # gain above 25% of baseline error looks too good to be true

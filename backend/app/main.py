@@ -64,8 +64,8 @@ def _replay(ledger: Ledger, source: Path, pace: float) -> None:
 def start_run(req: RunRequest):
     run_id = _new_id("r")
     if req.replay:
-        source = RUNS / f"{req.replay}.jsonl"
-        if not source.exists():
+        source = Path(RUNS) / f"{req.replay}.jsonl"
+        if source.resolve().parent != Path(RUNS).resolve() or not source.exists():
             raise HTTPException(404, f"no recorded run {req.replay}")
         ledger = Ledger(run_id, RUNS)
         thread = threading.Thread(target=_replay, args=(ledger, source, req.pace), daemon=True)
@@ -90,7 +90,8 @@ def list_runs():
 def run_events(run_id: str, after: int = 0):
     run = _runs.get(run_id)
     if run is not None:
-        events, done = run["ledger"].since(after), not run["thread"].is_alive()
+        done = not run["thread"].is_alive()  # first: events written after this are read next poll
+        events = run["ledger"].since(after)
     else:
         path = Path(RUNS) / f"{run_id}.jsonl"
         if not path.exists():

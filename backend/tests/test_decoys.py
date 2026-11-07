@@ -57,8 +57,10 @@ def test_emperors_real_plant_is_detectable_and_fake_is_not():
     df = make_meals()
     real = decoys.attach(df, "rise", decoys.plan(df, "rise", "real", 3))
     fake = decoys.attach(df, "rise", decoys.plan(df, "rise", "fake", 3))
-    assert engine.added_value(real, glad(decoys.EMPEROR), n_boot=200)["passed"]
-    assert not engine.added_value(fake, glad(decoys.EMPEROR), n_boot=200)["passed"]
+    plant = glad(decoys.EMPEROR).model_copy(update={"target": decoys.EMPEROR_TARGET})
+    assert engine.added_value(real, plant, n_boot=200)["passed"]
+    assert not engine.added_value(fake, plant, n_boot=200)["passed"]
+    assert (real["rise"] == df["rise"]).all()  # nobody else's outcome moves
 
 
 def test_caught_rules():

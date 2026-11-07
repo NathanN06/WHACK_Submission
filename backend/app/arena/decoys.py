@@ -15,6 +15,7 @@ NOISE = "lucky_charm"
 LUCKY = "moon_phase"
 COPYCAT = "carb_load_index"
 EMPEROR = "emperors_choice"
+EMPEROR_TARGET = "rise_emperor"  # the planted outcome; `rise` itself is never touched
 PLANT_STRENGTH = 0.25  # in standard deviations of the target per 1 SD of the plant
 
 
@@ -94,9 +95,9 @@ def attach(frame: pd.DataFrame, target: str, p: DecoyPlan, salt: int = 0,
         if p.emperor:
             out[EMPEROR] = rng.normal(size=n)
     y = out[target].to_numpy(float)
-    if p.emperor == "real":
-        y = y + PLANT_STRENGTH * np.nanstd(y) * out[EMPEROR].to_numpy(float)
-        out[target] = y
+    if p.emperor:
+        plant = PLANT_STRENGTH * np.nanstd(y) * out[EMPEROR].to_numpy(float)
+        out[EMPEROR_TARGET] = y + plant if p.emperor == "real" else y
     out[LEAK] = 0.8 * y + rng.normal(0, 0.2 * np.nanstd(y), n)
     out[COPYCAT] = 1.1 * out["carbs"].to_numpy(float) + rng.normal(0, 0.5, n)
     return out

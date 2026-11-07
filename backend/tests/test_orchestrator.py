@@ -2,6 +2,8 @@ import pytest
 
 from app.arena import decoys
 from app.arena.ledger import load
+from app.arena.agents import ScriptedLanista
+from app.arena.models import Gladiator
 from app.arena.orchestrator import Arena
 from tests.fixtures import make_meals, make_sensor_pair
 
@@ -9,7 +11,7 @@ from tests.fixtures import make_meals, make_sensor_pair
 def arena(tmp_path, emperor="real", **kw):
     train = make_meals(n_people=30, seed=0)
     return Arena("t1", train, test=make_meals(n_people=20, seed=9, prefix="B"),
-                 sensors=make_sensor_pair(train), emperor=emperor, n_perm=60, n_boot=300,
+                 sensors=make_sensor_pair(train), emperor=emperor, n_perm=400, n_boot=300,
                  runs_dir=str(tmp_path), **kw)
 
 
@@ -123,3 +125,43 @@ def test_crowd_theory_runs_without_stakes(tmp_path):
     assert s.gladiator.add_features == ["fiber"] and s.verdict == "CHAMPION"
     assert a.reputation == 100
     assert a.exhibition("pineapple on pizza") is None
+
+
+def test_real_emperor_does_not_touch_anyone_elses_outcome(tmp_path):
+    train = make_meals(n_people=30, seed=0)
+    test = make_meals(n_people=20, seed=9, prefix="B")
+    a = Arena("e1", train, test=test, emperor="real", n_perm=10, n_boot=50, runs_dir=str(tmp_path))
+    assert (a.train["rise"].to_numpy() == train["rise"].to_numpy()).all()
+    assert (a.test["rise"].to_numpy() == test["rise"].to_numpy()).all()
+    s = a.enter(Gladiator(id="x", claim="plant", add_features=[decoys.EMPEROR], origin="emperor"),
+                actor="emperor", auto_back=False)
+    assert s.gladiator.target == decoys.EMPEROR_TARGET
+
+
+def test_census_counts_every_claim_the_trial_judged(played):
+    judged = sum(1 for s in played.states.values()
+                 if "added_value" in s.results and not s.results["added_value"].get("untestable"))
+    ms = [r["m"] for s in played.states.values() for t, r in s.results.items() if t == "penalty"]
+    assert ms and max(ms) == judged
+
+
+def test_a_crash_mid_game_is_written_to_the_ledger(tmp_path):
+    class Broken:
+        def propose(self, day, catalog, graveyard, k):
+            raise RuntimeError("boom")
+
+    a = arena(tmp_path, lanista=Broken())
+    a.run()
+    actions = [e.action for e in a.ledger.events]
+    assert "error" in actions and actions[-1] == "summary"
+
+
+def test_crowd_theory_fights_with_the_validated_features(tmp_path):
+    class Greedy(ScriptedLanista):
+        def theory(self, text, catalog):
+            return Gladiator(id="new", claim=text, add_features=["carbs", "fiber", "fat", "protein"],
+                             origin="crowd")
+
+    a = arena(tmp_path, lanista=Greedy())
+    s = a.exhibition("everything")
+    assert s.gladiator.add_features == ["fiber", "fat"]

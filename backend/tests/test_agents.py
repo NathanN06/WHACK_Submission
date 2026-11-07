@@ -71,3 +71,11 @@ def test_api_errors_fall_back_to_script():
         raise ConnectionError("wifi died")
     back, _ = agents.LLMLanista(broken).decide(state_with_trial())
     assert back is True
+
+
+def test_llm_reply_with_no_features_falls_back_instead_of_crashing():
+    model = fake_model('{"gladiators": [{"claim": "nothing", "add_features": []}]}')
+    out = agents.LLMLanista(model).propose(2, CATALOG, [], k=5)
+    assert [g.add_features for g in out] == [["fiber"], ["fat"]]
+    g = agents.LLMLanista(model).theory("I reckon fibre flattens the spike", CATALOG)
+    assert g.add_features == ["fiber"]

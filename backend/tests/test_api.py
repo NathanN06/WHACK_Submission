@@ -48,3 +48,26 @@ def test_crowd_theory(client):
 
 def test_unknown_run_is_404(client):
     assert client.get("/api/runs/nope/events").status_code == 404
+
+
+def test_replay_cannot_leave_the_runs_folder(client, tmp_path):
+    (tmp_path.parent / "secret.jsonl").write_text("")
+    assert client.post("/api/runs", json={"replay": "../secret", "pace": 0}).status_code == 404
+
+
+def test_done_is_decided_before_reading_events(client):
+    class Thread:
+        alive = True
+
+        def is_alive(self):
+            return self.alive
+
+    thread = Thread()
+
+    class Ledger:  # the run finishes (and writes its last event) while we read
+        def since(self, after):
+            thread.alive = False
+            return []
+
+    main._runs["race"] = {"ledger": Ledger(), "thread": thread}
+    assert client.get("/api/runs/race/events").json()["done"] is False

@@ -12,7 +12,7 @@ import json
 import os
 from typing import Callable, Literal, Protocol
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from . import config
 from .models import Gladiator, GladiatorState
@@ -103,7 +103,7 @@ Never invent numbers. Reply with JSON only."""
 
 class _Proposal(BaseModel):
     claim: str
-    add_features: list[str]
+    add_features: list[str] = Field(min_length=1)
     expected_direction: Literal["positive", "negative", "either"] = "either"
 
 

@@ -51,14 +51,17 @@ class Arena:
     # ---------- running a whole game ----------
 
     def run(self) -> None:
-        for day in (1, 2, 3):
-            self.play_day(day)
-            if self.banished:
-                break
-        if not self.banished:
-            self.decoy_games()
-        if not self.banished:
-            self.champion_day()
+        try:
+            for day in (1, 2, 3):
+                self.play_day(day)
+                if self.banished:
+                    break
+            if not self.banished:
+                self.decoy_games()
+            if not self.banished:
+                self.champion_day()
+        except Exception as e:  # never end a game silently: say what broke, then sum up
+            self._emit(actor="system", action="error", line=f"The games were halted: {e!r}"[:300])
         self.summary()
 
     def play_day(self, day: int) -> None:
@@ -103,8 +106,11 @@ class Arena:
     # ---------- one gladiator ----------
 
     def enter(self, g: Gladiator, actor: str = "lanista", auto_back: bool | None = None) -> GladiatorState:
-        g = g.model_copy(update={"id": f"G{len(self.states) + 1:02d}", "day": self.day or g.day,
-                                 "baseline_features": self._baseline(self.day or g.day)})
+        update = {"id": f"G{len(self.states) + 1:02d}", "day": self.day or g.day,
+                  "baseline_features": self._baseline(self.day or g.day)}
+        if decoys.EMPEROR in g.add_features:
+            update["target"] = decoys.EMPEROR_TARGET
+        g = g.model_copy(update=update)
         s = GladiatorState(gladiator=g)
         self.states[g.id] = s
         self._emit(actor=actor, action="propose", state=s, gladiator=g.model_dump(), line=g.claim)
@@ -150,15 +156,21 @@ class Arena:
                        else "Out of denarii before the Shuffler. Unproven.")
 
     def census(self) -> None:
-        pvalues = {gid: s.results["shuffle_test"]["p"] for gid, s in self.states.items()
-                   if "shuffle_test" in s.results}
+        # Every claim the Trial judged counts as a try; ones that never reached the
+        # Shuffler count with p = 1. Otherwise selection before correction hides the tries.
+        pvalues = {}
+        for gid, s in self.states.items():
+            if "shuffle_test" in s.results:
+                pvalues[gid] = s.results["shuffle_test"]["p"]
+            elif "added_value" in s.results and not s.results["added_value"].get("untestable"):
+                pvalues[gid] = 1.0
         if not pvalues:
             return
         verdicts = engine.penalty(pvalues)
         n = len(pvalues)
         self._emit(actor="engine", action="census", test="penalty",
-                   line=f"The Census counts {n} gladiator{'s' if n != 1 else ''} shuffle-tested "
-                        "so far. The more you try, the higher the bar.")
+                   line=f"The Census counts {n} claim{'s' if n != 1 else ''} tried so far. "
+                        "The more you try, the higher the bar.")
         for gid, res in verdicts.items():
             s = self.states[gid]
             if s.status != "survivor":
@@ -175,7 +187,8 @@ class Arena:
         catalog = [f for f in public_catalog(self.registry, 3, set(self.train.columns))
                    if f["name"] not in {d.name for d in decoys.DECOY_FEATURES}]
         g = self.lanista.theory(text, catalog)
-        if g is None or self._validate(g, 3, catalog) is None:
+        g = None if g is None else self._validate(g.model_copy(update={"origin": "crowd"}), 3, catalog)
+        if g is None:
             self._emit(actor="crowd", action="no_match", line=f"No feature matches: {text[:80]}")
             return None
         s = self.enter(g.model_copy(update={"origin": "crowd"}), actor="crowd", auto_back=True)

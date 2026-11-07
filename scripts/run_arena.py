@@ -29,7 +29,7 @@ def main() -> None:
     ap.add_argument("--synthetic", action="store_true", help="use made-up meals, no database")
     ap.add_argument("--emperor", choices=["real", "fake"])
     ap.add_argument("--seed", type=int, default=0)
-    ap.add_argument("--perm", type=int, default=200, help="shuffles per Shuffler test")
+    ap.add_argument("--perm", type=int, default=500, help="shuffles per Shuffler test")
     args = ap.parse_args()
 
     if args.synthetic:

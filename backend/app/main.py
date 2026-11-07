@@ -193,6 +193,7 @@ def start_quest(req: QuestRequest):
         if source.resolve().parent != Path(QUESTS).resolve() or not source.exists():
             raise HTTPException(404, f"no recorded quest {req.replay}")
         thread = threading.Thread(target=_replay_quest, args=(ledger, source, req.pace), daemon=True)
+        quest = None
     else:
         train, test, sensors = frames()
         researcher, skeptic = make_roles(_use_llm(req.llm))
@@ -204,8 +205,20 @@ def start_quest(req: QuestRequest):
                          n_perm=req.n_perm, pace=req.pace)
         thread = threading.Thread(target=quest.run, daemon=True)
     thread.start()
-    _quests[quest_id] = {"ledger": ledger, "thread": thread}
+    _quests[quest_id] = {"ledger": ledger, "thread": thread, "quest": quest}
     return {"quest_id": quest_id}
+
+
+@app.post("/api/quests/{quest_id}/stop")
+def stop_quest(quest_id: str):
+    """The player left: stop the quest so it stops spending Claude calls."""
+    entry = _quests.get(quest_id)
+    if entry is None:
+        raise HTTPException(404, "unknown quest")
+    running = entry["thread"].is_alive() and entry.get("quest") is not None
+    if running:
+        entry["quest"].stop()
+    return {"stopped": running}
 
 
 @app.get("/api/quests")

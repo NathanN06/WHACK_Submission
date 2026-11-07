@@ -612,6 +612,15 @@ $("#how").addEventListener("click", async () => {
 });
 $("#rulebook").addEventListener("click", showRules);
 
+// Exit: stop the live quest on the server (so it stops spending Claude calls), then reload
+// to a fresh title screen. Reloading also cancels every poll, timer and animation at once.
+$("#exit").addEventListener("click", () => {
+  if (currentQuest && !streamDone) {
+    fetch(`/api/quests/${currentQuest}/stop`, { method: "POST", keepalive: true }).catch(() => {});
+  }
+  location.href = location.pathname;
+});
+
 $("#pause").addEventListener("click", () => {
   paused = !paused;
   $("#pause").setAttribute("aria-pressed", String(paused));

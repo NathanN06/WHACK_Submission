@@ -25,6 +25,10 @@ DECOY_DIRECTIONS = {decoys.NOISE: "negative", decoys.LUCKY: "either",
 DECOY_NAMES = [decoys.NOISE, decoys.LUCKY, decoys.LEAK, decoys.COPYCAT]
 
 
+class QuestStopped(Exception):
+    """Raised inside the quest thread once someone leaves the game screen."""
+
+
 class Gauntlet:
     def __init__(self, run_id: str, train: pd.DataFrame, test: pd.DataFrame | None = None,
                  sensors: dict[str, pd.DataFrame] | None = None, researcher=None, skeptic=None,
@@ -59,6 +63,7 @@ class Gauntlet:
         self.decoy_ids: dict[str, str] = {}
         self.level = 0
         self._calls = 0
+        self._stop = False
         self._announced: set[str] = set()
 
     # ---------- the whole quest ----------
@@ -69,6 +74,10 @@ class Gauntlet:
             for level in (1, 2, 3, 4):
                 self.play_level(level)
             return self.finale()
+        except QuestStopped:
+            self.ledger.write(level=self.level, actor="system", action="stopped",
+                              line="The player left the gauntlet, so the quest was stopped.")
+            return None
         except Exception as e:  # never end silently: say what broke
             self._emit(actor="system", action="error", line=f"The quest was halted: {e!r}"[:300])
             return None
@@ -440,7 +449,13 @@ class Gauntlet:
         self._calls += 1
         return self.seed + self._calls
 
+    def stop(self) -> None:
+        """Ask the quest to end; it stops at its next ledger write (an in-flight Claude call finishes first)."""
+        self._stop = True
+
     def _emit(self, hero: Hero | None = None, **fields) -> None:
+        if self._stop:
+            raise QuestStopped
         if hero is not None:
             fields.setdefault("agent_id", hero.id)
             fields.update(hp=hero.hp, credits=hero.credits, status=hero.status, verdict=hero.verdict)

@@ -106,8 +106,7 @@ Truth). Every fight is a real, deterministic statistical test; rules and HP weig
 - After level IV the champion walks into the Overworld and delivers the final report: winner and why,
   HP per level, damage by weakness, evidence contributions from real ablations, and a consensus that
   cites the exact encounters. If nothing validates, the verdict is **Inconclusive**.
-- In the game: Pause/Resume (Space), 1×/2×/4×, Skip level, Replay, Tutorial, Reduce motion, and a
+- In the game: Exit quest (stops a live quest), Pause/Resume (Space), 1×/2×/4×, Skip level, Replay, Tutorial, Reduce motion, and a
   **Ledger view** of every encounter with its raw numbers. `?quest=<id>` reopens a live quest.
-- The original gladiator arena is still at `/arena.html`.
 
 Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

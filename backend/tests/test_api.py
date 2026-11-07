@@ -142,3 +142,14 @@ def test_quest_paths_stay_in_the_quest_folder(quest_client, tmp_path):
     (tmp_path.parent / "secret.jsonl").write_text("")
     assert quest_client.post("/api/quests", json={"replay": "../secret"}).status_code == 404
     assert quest_client.get("/api/quests/..%2Fsecret/events").status_code == 404
+
+
+def test_leaving_stops_a_live_quest(quest_client):
+    body = {"max_heroes": 2, "n_perm": 20, "llm": False, "pace": 0.05}
+    quest_id = quest_client.post("/api/quests", json=body).json()["quest_id"]
+    time.sleep(0.3)
+    assert quest_client.post(f"/api/quests/{quest_id}/stop").json() == {"stopped": True}
+    events = wait_for_quest(quest_client, quest_id, timeout=10)
+    assert events[-1]["action"] == "stopped"
+    assert not any(e["action"] == "finale" for e in events)
+    assert quest_client.post("/api/quests/nope/stop").status_code == 404

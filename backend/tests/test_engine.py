@@ -49,3 +49,22 @@ def test_trial_untestable_with_few_people():
 def test_trial_untestable_when_column_missing(meals):
     r = engine.added_value(meals, glad("not_a_column"))
     assert r["untestable"]
+
+
+def test_shuffler_spares_real_and_kills_noise(meals):
+    assert engine.shuffle_test(meals, glad("fiber"), n_perm=100)["p"] < 0.05
+    assert engine.shuffle_test(meals, glad("noise"), n_perm=100)["p"] > 0.05
+
+
+def test_shuffler_handles_person_level_feature(meals):
+    r = engine.shuffle_test(meals, glad("hba1c"), n_perm=100)
+    assert r["passed"]  # HbA1c really shifts each person's rise in the fixture
+
+
+def test_census_benjamini_hochberg():
+    out = engine.penalty({"a": 0.01, "b": 0.04, "c": 0.03, "d": 0.5})
+    assert out["a"]["p_adj"] == pytest.approx(0.04)
+    assert out["b"]["p_adj"] == pytest.approx(0.04 * 4 / 3)
+    assert out["c"]["p_adj"] == pytest.approx(0.04 * 4 / 3)
+    assert out["d"]["p_adj"] == pytest.approx(0.5)
+    assert [k for k, v in out.items() if v["passed"]] == ["a"]

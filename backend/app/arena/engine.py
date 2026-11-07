@@ -109,3 +109,60 @@ def _oof_predictions(d: pd.DataFrame, target: str, cols: list[str]) -> np.ndarra
     for tr, te in participant_folds(d):
         pred[te] = _fit_predict(X[tr], y[tr], X[te])
     return pred
+
+
+def _shuffle(d: pd.DataFrame, cols: list[str], rng: np.random.Generator) -> pd.DataFrame:
+    """Break the link between features and outcome but keep everything else.
+
+    Meal-level features are shuffled within each person. Person-level features
+    (constant within a person, e.g. HbA1c) are shuffled across people.
+    """
+    out = d.copy()
+    for c in cols:
+        per_person = d.groupby(PID)[c].nunique(dropna=False)
+        if (per_person <= 1).all():
+            people = d.groupby(PID)[c].first()
+            mapping = pd.Series(rng.permutation(people.to_numpy()), index=people.index)
+            out[c] = d[PID].map(mapping).to_numpy()
+        else:
+            out[c] = d.groupby(PID)[c].transform(lambda s: rng.permutation(s.to_numpy()))
+    return out
+
+
+def shuffle_test(df: pd.DataFrame, g: Gladiator, n_perm: int = config.N_PERM, seed: int = 0) -> dict:
+    """The Shuffler: does the real feature beat shuffled copies of itself?"""
+    d = _clean(df, g)
+    base, full = _columns(g)
+    observed = float(_cv_gain_per_person(d, g.target, base, full).mean())
+    rng = np.random.default_rng(seed)
+    added = [f for f in full if f not in base]
+    null = np.array([
+        _cv_gain_per_person(_shuffle(d, added, rng), g.target, base, full).mean()
+        for _ in range(n_perm)
+    ])
+    k = int((null >= observed).sum())
+    p = (k + 1) / (n_perm + 1)
+    return {
+        "observed_gain": observed,
+        "null_mean": float(null.mean()),
+        "beaten_by": k,
+        "n_perm": n_perm,
+        "p": p,
+        "passed": bool(p < config.ALPHA),
+    }
+
+
+def penalty(pvalues: dict[str, float], alpha: float = config.ALPHA) -> dict[str, dict]:
+    """The Census: Benjamini-Hochberg across every claim shuffle-tested this run."""
+    if not pvalues:
+        return {}
+    ids = list(pvalues)
+    p = np.array([pvalues[i] for i in ids], dtype=float)
+    m = len(p)
+    order = np.argsort(p)
+    ranked = p[order] * m / np.arange(1, m + 1)
+    adj_sorted = np.minimum.accumulate(ranked[::-1])[::-1].clip(max=1.0)
+    adj = np.empty(m)
+    adj[order] = adj_sorted
+    return {i: {"p": float(p[j]), "p_adj": float(adj[j]), "m": m, "passed": bool(adj[j] < alpha)}
+            for j, i in enumerate(ids)}

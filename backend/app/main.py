@@ -17,13 +17,19 @@ from .arena.agents import RosterLanista, default_roster, llm_available, make_age
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
+from .gauntlet import rules as quest_rules
+from .gauntlet.agents import make_roles
+from .gauntlet.campaign import Gauntlet
+from .gauntlet.models import QuestEvent
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "runs"
+QUESTS = ROOT / "data" / "quests"
 DB = ROOT / "data" / "whack.duckdb"
 
-app = FastAPI(title="Gladiator Arena")
+app = FastAPI(title="Hypothesis Gauntlet")
 _runs: dict[str, dict] = {}
+_quests: dict[str, dict] = {}
 _frames = None
 _frames_lock = threading.Lock()
 
@@ -143,6 +149,76 @@ def test_theory(req: TheoryRequest):
     state = arena.exhibition(req.text)
     return {"run_id": run_id, "verdict": state.verdict if state else None,
             "events": [e.model_dump() for e in arena.ledger.events]}
+
+
+# ---------- Hypothesis Gauntlet ----------
+
+
+class QuestRequest(BaseModel):
+    hypotheses: list[RosterEntry] | None = Field(None, max_length=20)
+    max_heroes: int = Field(8, ge=1, le=16)
+    decoys: bool = True
+    llm: bool | None = None  # None = Claude if an API key is set
+    replay: str | None = None
+    pace: float = 0.0
+    seed: int = 0
+    n_perm: int = Field(200, ge=20, le=1000)
+
+
+def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
+    for e in load(source, QuestEvent):
+        ledger.write(**e.model_dump(exclude={"run_id", "seq", "ts"}))
+        time.sleep(pace)
+
+
+@app.post("/api/quests")
+def start_quest(req: QuestRequest):
+    quest_id = _new_id("q")
+    ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
+    if req.replay:
+        source = Path(QUESTS) / f"{req.replay}.jsonl"
+        if source.resolve().parent != Path(QUESTS).resolve() or not source.exists():
+            raise HTTPException(404, f"no recorded quest {req.replay}")
+        thread = threading.Thread(target=_replay_quest, args=(ledger, source, req.pace), daemon=True)
+    else:
+        train, test, sensors = frames()
+        researcher, skeptic = make_roles(_use_llm(req.llm))
+        chosen = None if req.hypotheses is None else [e.model_dump() for e in req.hypotheses[: req.max_heroes]]
+        quest = Gauntlet(quest_id, train, test, sensors, researcher, skeptic, ledger, hypotheses=chosen,
+                         with_decoys=req.decoys, max_heroes=req.max_heroes, seed=req.seed,
+                         n_perm=req.n_perm, pace=req.pace)
+        thread = threading.Thread(target=quest.run, daemon=True)
+    thread.start()
+    _quests[quest_id] = {"ledger": ledger, "thread": thread}
+    return {"quest_id": quest_id}
+
+
+@app.get("/api/quests")
+def list_quests():
+    return sorted((p.stem for p in Path(QUESTS).glob("*.jsonl")), reverse=True)
+
+
+@app.get("/api/quests/{quest_id}/events")
+def quest_events(quest_id: str, after: int = 0):
+    quest = _quests.get(quest_id)
+    if quest is not None:
+        done = not quest["thread"].is_alive()
+        events = quest["ledger"].since(after)
+    else:
+        path = Path(QUESTS) / f"{quest_id}.jsonl"
+        if path.resolve().parent != Path(QUESTS).resolve() or not path.exists():
+            raise HTTPException(404, "unknown quest")
+        events, done = load(path, QuestEvent)[after:], True
+    return {"events": [e.model_dump() for e in events], "done": done}
+
+
+@app.get("/api/quests-rules")
+def quest_rulebook():
+    """Every HP, credit and score rule, so the screen can show the rulebook it is judged by."""
+    return {"encounters": quest_rules.ENCOUNTERS, "levels": quest_rules.LEVELS,
+            "abilities": quest_rules.ABILITIES, "score": quest_rules.SCORE, "verdicts": quest_rules.VERDICTS,
+            "starting_hp": quest_rules.STARTING_HP, "starting_credits": quest_rules.STARTING_CREDITS,
+            "pass_heal": quest_rules.PASS_HEAL, "concede_damage": quest_rules.CONCEDE_DAMAGE}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend" / "src", html=True), name="ui")

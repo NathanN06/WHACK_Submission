@@ -87,6 +87,22 @@ SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'meal_respo
 
 Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.connect('data/whack.duckdb').sql('FROM meal_responses LIMIT 5'))"`
 
-## Getting started
+## Getting started: the Hypothesis Gauntlet
 
-_Setup instructions coming soon._
+The app is a pixel-art dungeon crawl where AI researchers defend hypotheses through four
+levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of
+Truth). Every fight is a real, deterministic statistical test; rules and HP weights are in
+[docs/gauntlet-rules.md](docs/gauntlet-rules.md).
+
+```bash
+.venv/bin/uvicorn app.main:app --app-dir backend --port 8000   # then open http://localhost:8000
+```
+
+- **Begin the quest** runs on `data/whack.duckdb` (build it first, see above). With
+  `ANTHROPIC_API_KEY` in `.env`, Claude plays the Researcher and the Skeptic; otherwise scripted agents do.
+- **Watch a recorded quest** plays `frontend/src/demo-quest.jsonl`, a run on synthetic meals with
+  known truth. It needs no server: `cd frontend/src && python3 -m http.server`, then open `index.html?demo`.
+- Command line: `.venv/bin/python scripts/run_gauntlet.py --synthetic` (or without `--synthetic` for real data).
+- The original gladiator arena is still at `/arena.html`.
+
+Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

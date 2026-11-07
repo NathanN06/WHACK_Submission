@@ -3,68 +3,96 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>The Arena</title>
+  <title>Hypothesis Gauntlet</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jersey+10&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="gauntlet.css">
 </head>
 <body>
-  <!-- Screen 1: title -->
-  <section class="screen title-screen" id="screen-title">
-    <canvas class="scene" id="title-scene" width="160" height="90" aria-hidden="true"></canvas>
+  <!-- Title -->
+  <section class="screen title" id="screen-title">
+    <canvas class="pixel full" id="title-canvas" width="320" height="180" aria-hidden="true"></canvas>
     <div class="title-copy">
-      <h1>The Arena</h1>
-      <p>Finding patterns is easy. Surviving the arena is not.</p>
+      <h1>Hypothesis<br>Gauntlet</h1>
+      <p class="tag">AI scientists enter a dungeon of conflicting evidence. They must survive four levels of
+        increasingly challenging evidence. The strongest emerges with a transparent, defensible conclusion.</p>
     </div>
-    <button class="press-play" id="play">Press play</button>
-  </section>
-
-  <!-- Screen 2: the gates -->
-  <section class="screen gate-screen" id="screen-gate" hidden>
-    <canvas class="scene" id="gate-scene" width="160" height="90" aria-hidden="true"></canvas>
-    <div class="plaque">
-      <h2 id="gate-q">How many hypotheses fight today?</h2>
-      <div class="gate-row">
-        <div class="stepper" role="group" aria-labelledby="gate-q">
-          <button type="button" id="fewer" aria-label="Fewer">−</button>
-          <input id="how-many" type="number" inputmode="numeric" min="1" max="12" value="12" aria-label="Number of hypotheses">
-          <button type="button" id="more" aria-label="More">+</button>
-        </div>
-        <button class="open-gates" id="start">Open the gates</button>
+    <div class="title-menu frame">
+      <label class="party-size">Hypotheses in the party
+        <span class="stepper"><button type="button" id="fewer" aria-label="Fewer">−</button>
+          <input id="party" type="number" min="1" max="12" value="8" inputmode="numeric" aria-label="Number of hypotheses">
+          <button type="button" id="more" aria-label="More">+</button></span>
+        <small>+ 4 hidden impostors</small>
+      </label>
+      <div class="menu-buttons">
+        <button class="btn gold" id="begin">Begin the quest</button>
+        <button class="btn" id="demo">Watch a recorded quest</button>
+        <button class="btn ghost" id="how">How it works</button>
       </div>
-      <p class="who" id="who-plays">Checking who is playing…</p>
+      <p class="who" id="who">Checking who is playing…</p>
     </div>
   </section>
 
-  <!-- Screen 3: the fight -->
-  <section class="screen arena-screen" id="screen-arena" hidden>
-    <header class="hud">
-      <h1>The Arena</h1>
-      <div class="hud-day" id="day">The gates are opening</div>
-      <div class="hud-stat">Reputation <strong id="reputation">100</strong>
-        <div class="meter"><div id="rep-bar"></div></div></div>
-      <div class="hud-stat">Denarii <strong id="denarii">60</strong></div>
-      <div class="hud-stat" id="counter">0 fought, 0 fallen, 0 standing</div>
+  <!-- The game -->
+  <section class="screen game" id="screen-game" hidden>
+    <header class="hud frame">
+      <div class="hud-level"><span class="hud-num" id="hud-num">I</span><div><strong id="hud-name">The Rumour Dungeon</strong>
+        <small id="hud-evidence">Evidence: popular claims</small></div></div>
+      <div class="hud-stat"><small>Standing</small><strong id="hud-standing">0</strong></div>
+      <div class="hud-stat"><small>Checks run</small><strong id="hud-checks">0</strong></div>
+      <div class="hud-stat"><small>Weak claims caught</small><strong id="hud-caught">0</strong></div>
+      <div class="controls" role="group" aria-label="Playback">
+        <button class="btn small" id="pause" aria-pressed="false">Pause</button>
+        <button class="btn small speed" data-speed="1" aria-pressed="true">1×</button>
+        <button class="btn small speed" data-speed="2" aria-pressed="false">2×</button>
+        <button class="btn small speed" data-speed="4" aria-pressed="false">4×</button>
+        <button class="btn small" id="skip" title="Play the rest of this level instantly">Skip level</button>
+        <button class="btn small" id="rulebook">Rulebook</button>
+      </div>
     </header>
-    <main>
-      <div class="lanes">
-        <section class="lane" data-lane="tunnel"><h2>The Tunnel</h2><div class="cards"></div></section>
-        <section class="lane" data-lane="arena"><h2>The Arena</h2><div class="cards"></div></section>
-        <section class="lane" data-lane="standing"><h2>Still Standing</h2><div class="cards"></div></section>
-        <section class="lane" data-lane="graveyard"><h2>The Graveyard</h2><div class="cards"></div></section>
+
+    <div class="stage">
+      <div class="viewport frame">
+        <canvas class="pixel" id="game-canvas" width="320" height="180" aria-label="The dungeon"></canvas>
+        <div class="banner" id="banner" hidden></div>
+        <div class="speech" id="speech" hidden></div>
       </div>
-      <aside class="log">
-        <h2>The Crowd Hears</h2>
-        <ol id="feed"></ol>
+      <aside class="party frame" aria-label="The party">
+        <h2>The Party</h2>
+        <ol id="party-list"></ol>
       </aside>
-    </main>
+    </div>
+
+    <section class="combat frame" id="combat" aria-live="polite">
+      <div class="combat-who">
+        <canvas class="pixel portrait" id="foe-portrait" width="48" height="48" aria-hidden="true"></canvas>
+        <div><small>Enemy</small><strong id="c-enemy">—</strong><small id="c-hero"></small></div>
+      </div>
+      <dl class="combat-grid">
+        <div><dt>1 · Obstacle</dt><dd id="c-attack">The party gathers at the dungeon gate.</dd></div>
+        <div><dt>2 · Claim challenged</dt><dd id="c-claim">—</dd></div>
+        <div><dt>3 · Agent action</dt><dd id="c-action">—</dd></div>
+        <div><dt>4 · Test executed</dt><dd id="c-test">—</dd></div>
+        <div><dt>5 · Result</dt><dd id="c-result">—</dd></div>
+        <div class="c-hp"><dt>6 · HP</dt><dd id="c-hp">—</dd></div>
+        <div class="wide"><dt>7 · In plain English</dt><dd id="c-explain">—</dd></div>
+      </dl>
+    </section>
+
+    <details class="ledger frame">
+      <summary>Evidence ledger <small>(every event, in order)</small></summary>
+      <ol id="feed"></ol>
+    </details>
   </section>
 
-  <dialog id="summary"></dialog>
+  <dialog id="level-done" class="frame"></dialog>
+  <dialog id="finale" class="frame"></dialog>
+  <dialog id="rules" class="frame"></dialog>
+  <dialog id="hero-card" class="frame"></dialog>
 
-  <script src="arena-state.js"></script>
-  <script src="roster.js"></script>
-  <script src="scenes.js"></script>
-  <script src="app.js"></script>
+  <script src="quest-state.js"></script>
+  <script src="sprites.js"></script>
+  <script src="worlds.js"></script>
+  <script src="gauntlet.js"></script>
 </body>
 </html>

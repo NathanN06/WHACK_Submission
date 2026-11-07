@@ -23,3 +23,6 @@ npm-debug.log*
 .DS_Store
 .vscode/
 .idea/
+
+# Datasets (download with scripts/download_data.py)
+data/

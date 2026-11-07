@@ -6,6 +6,7 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - `backend/` — API and research/statistics engine
 - `frontend/` — web UI
 - `docs/` — notes and pitch material
+- `scripts/download_data.py` — downloads datasets into `data/` (gitignored; never commit data)
 
 ## Guidelines
 - Hackathon pace: keep things simple and demo-able; prefer working end-to-end over polish.

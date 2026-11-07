@@ -20,3 +20,9 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - Hackathon pace: keep things simple and demo-able; prefer working end-to-end over polish.
 - Every "discovery" should be backed by a test that guards against luck (e.g. holdout replication, permutation tests, multiple-comparison correction).
 - Never commit secrets — API keys go in `.env` (gitignored).
+
+## The Arena: rules for anyone (human or Claude) editing backend/app/arena
+- Agents never produce numbers, p-values or verdicts. Only engine.py measures; only referee.py rules.
+- Cross-validation folds are split by participant_id, never by meal.
+- Every number the UI shows comes from the ledger (data/runs/*.jsonl).
+- Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/arena-state.test.js

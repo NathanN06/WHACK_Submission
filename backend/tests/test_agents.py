@@ -117,3 +117,11 @@ def test_default_roster_is_the_scripted_proposals():
     assert [d["day"] for d in days] == [1, 2, 3]
     assert [h["add_features"] for h in days[1]["hypotheses"]] == [["fiber"], ["fat"]]
     assert days[1]["features"] == ["fiber", "fat"]  # unlocked that day
+
+
+def test_blank_key_in_dotenv_is_ignored(tmp_path, monkeypatch):
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    (tmp_path / ".env").write_text("ANTHROPIC_API_KEY=\n")
+    agents.load_env_key(tmp_path / ".env")
+    import os
+    assert "ANTHROPIC_API_KEY" not in os.environ

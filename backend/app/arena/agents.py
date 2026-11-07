@@ -307,8 +307,9 @@ def load_env_key(path: str | os.PathLike = ".env") -> None:
         return
     for line in lines:
         key, sep, value = line.strip().partition("=")
-        if sep and key.strip() == "ANTHROPIC_API_KEY":
-            os.environ["ANTHROPIC_API_KEY"] = value.strip().strip('"').strip("'")
+        value = value.strip().strip('"').strip("'")
+        if sep and key.strip() == "ANTHROPIC_API_KEY" and value:
+            os.environ["ANTHROPIC_API_KEY"] = value
             return
 
 

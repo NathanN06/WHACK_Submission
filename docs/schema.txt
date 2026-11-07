@@ -1,0 +1,168 @@
+
+===== meal_responses
+┌──────────────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│       column_name        │ column_type │  null   │   key   │ default │  extra  │
+│         varchar          │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├──────────────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ meal_event_id            │ HUGEINT     │ YES     │ NULL    │ NULL    │ NULL    │
+│ session_id               │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ participant_id           │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ dataset                  │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ meal_ts                  │ TIMESTAMP   │ YES     │ NULL    │ NULL    │ NULL    │
+│ hour_of_day              │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ day_of_week              │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ meal_type                │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ description              │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ n_items                  │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│    ·                     │   ·         │  ·      │  ·      │  ·      │  ·      │
+│    ·                     │   ·         │  ·      │  ·      │  ·      │  ·      │
+│    ·                     │   ·         │  ·      │  ·      │  ·      │  ·      │
+│ n_readings               │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ coverage_pct             │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ last_reading_min         │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ max_gap_min              │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ quality_ok               │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ exclusion_reason         │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ prior_meal_within_window │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ later_meal_within_window │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ confounded               │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ clean                    │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+└──────────────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+  35 rows (20 shown)                                                   6 columns
+
+┌───────────────┬────────────┬────────────────┬───┬──────────────────────┬──────────────────────┬────────────┬─────────┐
+│ meal_event_id │ session_id │ participant_id │ … │ prior_meal_within_w… │ later_meal_within_w… │ confounded │  clean  │
+│    int128     │  varchar   │    varchar     │ … │       boolean        │       boolean        │  boolean   │ boolean │
+├───────────────┼────────────┼────────────────┼───┼──────────────────────┼──────────────────────┼────────────┼─────────┤
+│             1 │ BUT-101001 │ BUT-101        │ … │ false                │ true                 │ true       │ false   │
+│             2 │ BUT-101001 │ BUT-101        │ … │ true                 │ false                │ true       │ false   │
+│             3 │ BUT-101001 │ BUT-101        │ … │ false                │ true                 │ true       │ false   │
+└───────────────┴────────────┴────────────────┴───┴──────────────────────┴──────────────────────┴────────────┴─────────┘
+  3 rows                                                                                          35 columns (7 shown)
+
+
+===== meal_events
+┌───────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│    column_name    │ column_type │  null   │   key   │ default │  extra  │
+│      varchar      │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├───────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ meal_event_id     │ HUGEINT     │ YES     │ NULL    │ NULL    │ NULL    │
+│ session_id        │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ participant_id    │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ dataset           │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ ts                │ TIMESTAMP   │ YES     │ NULL    │ NULL    │ NULL    │
+│ last_item_ts      │ TIMESTAMP   │ YES     │ NULL    │ NULL    │ NULL    │
+│ n_items           │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ meal_type         │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ description       │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ nutrition_missing │ BOOLEAN     │ YES     │ NULL    │ NULL    │ NULL    │
+│ calories          │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ carbs_g           │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ protein_g         │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ fat_g             │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ fiber_g           │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ sugar_g           │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+└───────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+  16 rows                                                       6 columns
+
+┌───────────────┬────────────┬────────────────┬─────────┬───┬───────────┬────────┬─────────┬─────────┐
+│ meal_event_id │ session_id │ participant_id │ dataset │ … │ protein_g │ fat_g  │ fiber_g │ sugar_g │
+│    int128     │  varchar   │    varchar     │ varchar │ … │  double   │ double │ double  │ double  │
+├───────────────┼────────────┼────────────────┼─────────┼───┼───────────┼────────┼─────────┼─────────┤
+│             1 │ BUT-101001 │ BUT-101        │ but_cgm │ … │      37.6 │   17.9 │    NULL │     4.3 │
+│             2 │ BUT-101001 │ BUT-101        │ but_cgm │ … │       9.4 │   14.8 │    NULL │    18.2 │
+│             3 │ BUT-101001 │ BUT-101        │ but_cgm │ … │       2.0 │    4.8 │    NULL │     6.0 │
+└───────────────┴────────────┴────────────────┴─────────┴───┴───────────┴────────┴─────────┴─────────┘
+  3 rows                                                                        16 columns (8 shown)
+
+
+===== participants
+┌──────────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│     column_name      │ column_type │  null   │   key   │ default │  extra  │
+│       varchar        │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├──────────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ participant_id       │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ dataset              │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ age                  │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ sex                  │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ bmi                  │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ weight_kg            │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ height_cm            │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ hba1c_pct            │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ fasting_glucose_mgdl │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ glycemic_status      │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+└──────────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+  10 rows                                                          6 columns
+
+┌────────────────┬─────────┬───────┬─────────┬───┬───────────┬───────────┬──────────────────────┬─────────────────┐
+│ participant_id │ dataset │  age  │   sex   │ … │ height_cm │ hba1c_pct │ fasting_glucose_mgdl │ glycemic_status │
+│    varchar     │ varchar │ int64 │ varchar │ … │  double   │  double   │        int64         │     varchar     │
+├────────────────┼─────────┼───────┼─────────┼───┼───────────┼───────────┼──────────────────────┼─────────────────┤
+│ BUT-101        │ but_cgm │    33 │ M       │ … │     182.0 │      NULL │                 NULL │ healthy_active  │
+│ BUT-102        │ but_cgm │    27 │ M       │ … │     189.0 │      NULL │                 NULL │ healthy_active  │
+│ BUT-103        │ but_cgm │    45 │ M       │ … │     178.0 │      NULL │                 NULL │ healthy_active  │
+└────────────────┴─────────┴───────┴─────────┴───┴───────────┴───────────┴──────────────────────┴─────────────────┘
+  3 rows                                                                                     10 columns (8 shown)
+
+
+===== glucose
+┌────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│  column_name   │ column_type │  null   │   key   │ default │  extra  │
+│    varchar     │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ session_id     │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ participant_id │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ dataset        │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ ts             │ TIMESTAMP   │ YES     │ NULL    │ NULL    │ NULL    │
+│ sensor         │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ glucose_mgdl   │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+└────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+
+┌────────────┬────────────────┬─────────┬─────────────────────┬───────────┬──────────────┐
+│ session_id │ participant_id │ dataset │         ts          │  sensor   │ glucose_mgdl │
+│  varchar   │    varchar     │ varchar │      timestamp      │  varchar  │    double    │
+├────────────┼────────────────┼─────────┼─────────────────────┼───────────┼──────────────┤
+│ BUT-101001 │ BUT-101        │ but_cgm │ 2139-03-02 12:22:17 │ dexcom_g7 │         66.7 │
+│ BUT-101001 │ BUT-101        │ but_cgm │ 2139-03-02 12:27:17 │ dexcom_g7 │         68.5 │
+│ BUT-101001 │ BUT-101        │ but_cgm │ 2139-03-02 12:32:17 │ dexcom_g7 │         68.5 │
+└────────────┴────────────────┴─────────┴─────────────────────┴───────────┴──────────────┘
+
+
+===== cgmacros_minute
+┌─────────────────────┬─────────────┬─────────┬─────────┬─────────┬─────────┐
+│     column_name     │ column_type │  null   │   key   │ default │  extra  │
+│       varchar       │   varchar   │ varchar │ varchar │ varchar │ varchar │
+├─────────────────────┼─────────────┼─────────┼─────────┼─────────┼─────────┤
+│ session_id          │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ participant_id      │ VARCHAR     │ YES     │ NULL    │ NULL    │ NULL    │
+│ ts                  │ TIMESTAMP   │ YES     │ NULL    │ NULL    │ NULL    │
+│ glucose_libre_mgdl  │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ glucose_dexcom_mgdl │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ heart_rate_bpm      │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ activity_kcal       │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ mets                │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+│ steps               │ BIGINT      │ YES     │ NULL    │ NULL    │ NULL    │
+│ intensity           │ DOUBLE      │ YES     │ NULL    │ NULL    │ NULL    │
+└─────────────────────┴─────────────┴─────────┴─────────┴─────────┴─────────┘
+  10 rows                                                         6 columns
+
+┌────────────┬────────────────┬─────────────────────┬────────────────────┬───┬────────┬───────┬───────────┐
+│ session_id │ participant_id │         ts          │ glucose_libre_mgdl │ … │  mets  │ steps │ intensity │
+│  varchar   │    varchar     │      timestamp      │       double       │ … │ double │ int64 │  double   │
+├────────────┼────────────────┼─────────────────────┼────────────────────┼───┼────────┼───────┼───────────┤
+│ CGM-001    │ CGM-001        │ 2020-05-01 10:30:00 │               84.0 │ … │   10.0 │  NULL │      NULL │
+│ CGM-001    │ CGM-001        │ 2020-05-01 10:31:00 │  84.13333333333334 │ … │   10.0 │  NULL │      NULL │
+│ CGM-001    │ CGM-001        │ 2020-05-01 10:32:00 │  84.26666666666667 │ … │   10.0 │  NULL │      NULL │
+└────────────┴────────────────┴─────────────────────┴────────────────────┴───┴────────┴───────┴───────────┘
+  3 rows                                                                             10 columns (7 shown)
+
+
+meal_responses rows per dataset and sensor:
+┌───────────────────────────┬───────┬────────┐
+│ "left"(participant_id, 3) │ meals │ people │
+│          varchar          │ int64 │ int64  │
+├───────────────────────────┼───────┼────────┤
+│ BUT                       │  1311 │     58 │
+│ CGM                       │  1134 │     45 │
+└───────────────────────────┴───────┴────────┘
+

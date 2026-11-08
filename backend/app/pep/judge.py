@@ -2,6 +2,10 @@
 
 Models are fitted here with plain IRLS (no extra dependencies): Poisson rate models with a
 person-time offset for effects, logistic models for propensity scores and one-year risk.
+
+Everything fitted on the training years is point-in-time: follow-up is censored at the training cutoff, and
+one-year risk models use only patients whose year had ended by then. Only the scoring patients (the vaulted
+holdout, or the second vault at the Trial of Truth) are followed for their whole year.
 """
 
 from __future__ import annotations
@@ -13,7 +17,7 @@ import numpy as np
 from scipy import stats
 
 from . import rules
-from .world import COVARIATES, SITES, SUBGROUPS, World
+from .world import COVARIATES, SITES, SUBGROUPS, TRAIN_END, World
 
 
 @dataclass
@@ -77,9 +81,9 @@ def sidak(p: float, K: int) -> float:
 
 # ---------- effects ----------
 
-def effect(w: World, outcome: str, design: str, adjusted: bool, mask: np.ndarray) -> dict:
-    """Log rate ratio of the drug (exposure) on the outcome, with its Wald p-value."""
-    r = w.rows(outcome, design, mask)
+def effect(w: World, outcome: str, design: str, adjusted: bool, mask: np.ndarray, cutoff: int | None = TRAIN_END) -> dict:
+    """Log rate ratio of the drug (exposure) on the outcome, with its Wald p-value. Follow-up stops at `cutoff`."""
+    r = w.rows(outcome, design, mask, cutoff)
     X = r["exposed"][:, None]
     if adjusted:
         X = np.column_stack([X, w.covariates(r["i"])])
@@ -212,8 +216,9 @@ def level4(w: World, s, st: ScrollState) -> dict:
             "rr_current": cur["rr"], "rr_purged": purged["rr"], "delta_purge": delta, "beta_used": beta, **g}
 
 
-def risk_models(w: World, outcome: str, mask: np.ndarray):
-    nu = w.new_user(outcome, mask)
+def risk_models(w: World, outcome: str, mask: np.ndarray, cutoff: int | None = TRAIN_END):
+    """The pooled, comparator-only and propensity models, fitted on patients whose year had ended by `cutoff`."""
+    nu = w.new_user(outcome, mask, cutoff)
     X = w.covariates(nu["i"])
     pooled = logistic_fit(X, nu["y"])
     comp = nu["treated"] == 0
@@ -236,20 +241,31 @@ def match(ps_t: np.ndarray, ps_c: np.ndarray, caliper: float = rules.CALIPER) ->
     return pairs
 
 
-def guardian(w: World, outcome: str, beta: float, train_split: str = "train", test_split: str = "holdout") -> dict:
-    """Out-of-sample skill on the vaulted, matched new-user holdout: the scroll's effect vs the comparator's risk model."""
-    _, comparator, ps = risk_models(w, outcome, w.mask(train_split))
-    nu = w.new_user(outcome, w.mask(test_split))
+def guardian(w: World, outcome: str, beta: float, fit_mask: np.ndarray | None = None, test_mask: np.ndarray | None = None,
+             fit_cutoff: int | None = TRAIN_END, test_cutoff: int | None = None, direction: int | None = None) -> dict:
+    """Out-of-sample skill on matched new users the models never saw: the scroll's effect vs the comparator's risk model.
+
+    By default the models are fitted on the training years, point-in-time (`fit_cutoff`), and scored on the vaulted
+    holdout, each patient after their own year has passed (`test_cutoff` None). The same matched pairs also give the
+    drug's risk ratio, and with it the claim's scientific status (`direction` is the claimed sign, the campaign's by default).
+    """
+    fit_mask = w.mask("train") if fit_mask is None else fit_mask
+    test_mask = w.mask("holdout") if test_mask is None else test_mask
+    direction = w.c.effect_direction if direction is None else direction
+    _, comparator, ps = risk_models(w, outcome, fit_mask, fit_cutoff)
+    nu = w.new_user(outcome, test_mask, test_cutoff)
     X = w.covariates(nu["i"])
     e = logistic_predict(ps, X)
     t_idx, c_idx = np.nonzero(nu["treated"] == 1)[0], np.nonzero(nu["treated"] == 0)[0]
     pairs = match(e[t_idx], e[c_idx])
     if len(pairs) < 2:  # no overlap: nothing to score, so no skill can be claimed
+        eff = matched_effect(np.zeros(0), np.zeros(0), direction)
         return {"ss_oos": 0.0, "p_dm": 1.0, "dm_stat": 0.0, "matched_pairs": len(pairs), "no_overlap": True,
                 "loss_scroll": None, "loss_comparator": None, "lift_pct": 0.0,
                 "observed": {"treated": None, "comparator": None},
                 "predicted": {"scroll_treated": None, "baseline_treated": None,
-                              "scroll_comparator": None, "baseline_comparator": None}}
+                              "scroll_comparator": None, "baseline_comparator": None},
+                "effect": eff, "science": science_status(eff, direction)}
     idx = np.array([t_idx[i] for i, _ in pairs] + [c_idx[j] for _, j in pairs], dtype=int)
     y, treated = nu["y"][idx], nu["treated"][idx]
     # Baseline = "no drug effect": the comparator's risk model for everyone. The scroll starts
@@ -263,26 +279,125 @@ def guardian(w: World, outcome: str, beta: float, train_split: str = "train", te
     t = d.mean() / (d.std(ddof=1) / math.sqrt(len(d))) if d.std() > 0 else 0.0
     p = float(stats.t.sf(t, len(d) - 1))
     tr = treated == 1
+    eff = matched_effect(y, treated, direction, expected=p0)
     return {"ss_oos": float(ss), "p_dm": p, "dm_stat": float(t), "matched_pairs": len(pairs),
             "loss_scroll": float(l_scroll.mean()), "loss_comparator": float(l_base.mean()),
             "lift_pct": float(100 * ss),
             "observed": {"treated": float(y[tr].mean()), "comparator": float(y[~tr].mean())},
             "predicted": {"scroll_treated": float(p_scroll[tr].mean()), "baseline_treated": float(p_base[tr].mean()),
-                          "scroll_comparator": float(p_scroll[~tr].mean()), "baseline_comparator": float(p_base[~tr].mean())}}
+                          "scroll_comparator": float(p_scroll[~tr].mean()), "baseline_comparator": float(p_base[~tr].mean())},
+            "effect": eff, "science": science_status(eff, direction)}
+
+
+# ---------- what the matched pairs say about the claim itself ----------
+
+def matched_effect(y: np.ndarray, treated: np.ndarray, direction: int, expected: np.ndarray | None = None) -> dict:
+    """The drug's one-year risk ratio among matched users and comparators, with a 95% interval.
+
+    `expected` (each patient's risk under the comparator's model, fitted on the training years) standardises the ratio:
+    (observed / expected among users) / (observed / expected among comparators), which removes the imbalance the
+    matching caliper leaves behind. Without it, the crude ratio of risks.
+    A rare outcome (comparator risk under rules.RARE_RISK) or a sparse one (fewer than rules.SPARSE_EVENTS events in
+    an arm) gets the exact conditional interval: given the m events, the users' share is binomial with
+    p = E1 RR / (E1 RR + E0), and the Clopper-Pearson interval for p maps onto RR. Otherwise the Wald interval on
+    log RR. `mde_rr` is the smallest risk ratio in the claimed direction these pairs would detect (rules.POWER, ALPHA).
+    """
+    t = np.asarray(treated) == 1
+    y = np.asarray(y, dtype=float)
+    n1, n0 = int(t.sum()), int((~t).sum())
+    a, c = int(y[t].sum()), int(y[~t].sum())
+    p1, p0 = (a / n1 if n1 else None), (c / n0 if n0 else None)
+    out = {"n_treated": n1, "n_comparator": n0, "events_treated": a, "events_comparator": c,
+           "risk_treated": p1, "risk_comparator": p0, "rr": None, "lo": None, "hi": None, "p": None,
+           "method": "not estimable", "standardised": expected is not None,
+           "mde_rr": detectable_rr(n1, n0, p0 or 0.0, direction)}
+    if not n1 or not n0 or a + c == 0:
+        return out
+    E1, E0 = (float(np.sum(expected[t])), float(np.sum(expected[~t]))) if expected is not None else (float(n1), float(n0))
+    ratio = E0 / E1                     # RR = (a / E1) / (c / E0) = (a / c) x ratio
+    if p0 < rules.RARE_RISK or min(a, c) < rules.SPARSE_EVENTS:
+        m = a + c
+        lo_p = stats.beta.ppf(0.025, a, m - a + 1) if a > 0 else 0.0
+        hi_p = stats.beta.ppf(0.975, a + 1, m - a) if a < m else 1.0
+        rr = (a / c) * ratio if c else math.inf
+        lo = lo_p / (1 - lo_p) * ratio
+        hi = hi_p / (1 - hi_p) * ratio if hi_p < 1 else math.inf
+        p = float(stats.binomtest(a, m, E1 / (E1 + E0)).pvalue)
+        method = "exact conditional (Clopper-Pearson)"
+    else:
+        rr = (a / c) * ratio
+        se = math.sqrt(1 / a - 1 / n1 + 1 / c - 1 / n0)
+        lo, hi = rr * math.exp(-1.96 * se), rr * math.exp(1.96 * se)
+        p = p_two(math.log(rr) / se)
+        method = "Wald (log risk ratio)"
+    return out | {"rr": float(rr), "lo": float(lo), "hi": float(hi), "p": p, "method": method}
+
+
+def detectable_rr(n1: int, n0: int, p0: float, direction: int) -> float | None:
+    """The smallest risk ratio in the claimed direction that n1 users and n0 comparators (comparator risk p0) would
+    detect with power rules.POWER in a two-sided test at rules.ALPHA. None when no ratio would do."""
+    if n1 < 2 or n0 < 2 or not 0 < p0 < 1:
+        return None
+    z = stats.norm.ppf(1 - rules.ALPHA / 2) + stats.norm.ppf(rules.POWER)
+    lr = np.linspace(0.005, 3.0, 600)            # |log RR| from 0.005 to 3 (a risk ratio of about 20, or 1/20)
+    rr = np.exp(direction * lr)
+    p1 = rr * p0
+    ok = p1 < 1
+    se = np.sqrt((1 - p1[ok]) / (n1 * p1[ok]) + (1 - p0) / (n0 * p0))
+    hit = np.nonzero(lr[ok] >= z * se)[0]
+    return float(rr[ok][hit[0]]) if len(hit) else None
+
+
+def science_status(eff: dict, direction: int) -> dict:
+    """SUPPORTED, REFUTED, INCONCLUSIVE or NOT ASSESSED: the 95% interval against no effect and against the smallest
+    effect of interest (rules.SESOI). Independent of the scroll's design and HP: it is about the drug, not the test."""
+    sesoi = rules.SESOI[direction]
+    lo, hi, rr = eff.get("lo"), eff.get("hi"), eff.get("rr")
+    mde = eff.get("mde_rr")
+    word = "reduction" if direction < 0 else "increase"
+    size = f"{abs(1 - sesoi) * 100:.0f}%"
+    if lo is None or hi is None:
+        return {"status": "NOT ASSESSED", "sesoi_rr": sesoi, "below_sesoi": False, "mde_rr": mde,
+                "why": "No matched users and comparators with events, so the drug's effect could not be estimated."}
+    ci = f"risk ratio {_num(rr)} (95% CI {_num(lo)} to {_num(hi)})"
+    claimed = hi < 1 if direction < 0 else lo > 1
+    ruled_out = lo > sesoi if direction < 0 else hi < sesoi
+    if claimed:
+        status = "SUPPORTED"
+        why = (f"{ci}: the interval excludes no effect, so the claimed {word} is real in these patients"
+               + (f", but smaller than the {size} the question cares about." if ruled_out else "."))
+    elif ruled_out:
+        status = "REFUTED"
+        opposite = lo > 1 if direction < 0 else hi < 1
+        why = (f"{ci}: the interval excludes a {word} as large as {size} (RR {sesoi:.2f})"
+               + (", and the drug moved the risk the other way." if opposite else ", so any effect is too small to matter."))
+    else:
+        status = "INCONCLUSIVE"
+        why = (f"{ci}: the interval includes both no effect and a {word} of {size} or more, so these patients cannot "
+               "tell them apart" + (f"; they could only reliably detect a risk ratio of {_num(mde)} or beyond." if mde else
+                                    "; no realistic effect could be detected with this many events."))
+    return {"status": status, "sesoi_rr": sesoi, "below_sesoi": bool(claimed and ruled_out), "mde_rr": mde, "why": why}
+
+
+def _num(x) -> str:
+    if x is None:
+        return "n/a"
+    if math.isinf(x):
+        return "infinity"
+    return f"{x:.2f}"
 
 
 def ablation_keeps_drug(w: World, st: ScrollState) -> tuple[bool, dict]:
-    """Ablation Strike: is the drug term worth keeping on the last slice of the training years?"""
-    train = w.mask("train")
-    cut = np.quantile(w.index[train], 1 - rules.VALIDATION_SLICE)
-    fit_mask, val_mask = train & (w.index < cut), train & (w.index >= cut)
+    """Ablation Strike: is the drug term worth keeping on a later slice of the training years?
+
+    Everything it reads was observable at the training cutoff: patients whose year of follow-up had ended by then,
+    split by index date into a fitting part and a later validation part, scored on outcomes seen before the cutoff.
+    """
+    seen = w.mask("train") & (w.index + rules.FOLLOW_UP <= TRAIN_END)
+    cut = np.quantile(w.index[seen], 1 - rules.VALIDATION_SLICE)
+    fit_mask, val_mask = seen & (w.index < cut), seen & (w.index >= cut)
     beta = effect(w, st.outcome, st.design, st.adjusted, fit_mask)["beta"]
-    saved = w.split.copy()
-    try:
-        w.split = np.where(fit_mask, "fit", np.where(val_mask, "val", "other"))
-        g = guardian(w, st.outcome, beta, "fit", "val")
-    finally:
-        w.split = saved
+    g = guardian(w, st.outcome, beta, fit_mask=fit_mask, test_mask=val_mask, fit_cutoff=TRAIN_END, test_cutoff=TRAIN_END)
     return g["ss_oos"] > 0, g
 
 

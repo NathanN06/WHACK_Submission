@@ -249,3 +249,130 @@ def test_without_a_director_the_hero_follows_its_own_recommendation(tmp_path):
     assert q.bridge_log[0]["by"] == "autopilot"
     assert result["overworld"]["trial"]["outcome"] == "VALIDATED DISCOVERY"
     assert q.vault_opened is not None
+
+
+# ---------- anti-farming, chips, sources, the fetcher and the idle timeout ----------
+
+def test_repeating_a_boss_earns_nothing_and_a_family_rewards_once(tmp_path):
+    D = Driver(tmp_path)
+    D.wait("level 1")
+    a = D.q.agents["pioneer"]
+
+    def fight(rid):
+        off = D.d.chat({"mode": "CHALLENGE", "archetype": "chance", "target": "pioneer", "request_id": f"c{rid}"})
+        return D.d.mystery(off["mystery"]["id"], "summon", f"s{rid}")
+
+    first = fight(1)["mystery"]
+    assert first["status"] == "survived" and first["hp_delta"] == min(rules.MYSTERY_HP["SURVIVED"], 100 - (a.hp - first["hp_delta"]))
+    looks = D.d.looks["pioneer"]
+    hp = a.hp
+    rep = fight(2)
+    assert rep["mystery"]["status"] == "repeat" and rep["mystery"]["repeat_of"] == first["id"]
+    row = next(e for e in rep["events"] if e["action"] == "mystery_result")
+    assert row["hp_delta"] == 0 and a.hp == hp and D.d.looks["pioneer"] == looks     # not re-run, nothing changes
+    D.d.advance(1)
+    D.wait("level 2")                                # Bias Detection changed the scroll: the test runs again
+    assert a.st.adjusted
+    again = fight(3)["mystery"]
+    assert again["status"] == "survived" and again["hp_delta"] == 0 and D.d.looks["pioneer"] == looks + 1
+    assert "SURVIVED_AGAIN" in again["result"]["rule"] or again["result"]["plain"].endswith("no more HP.")
+    D.to_bridge(2)
+    D.finish("inconclusive")
+
+
+def test_a_challenge_chip_names_the_registered_test(tmp_path):
+    D = Driver(tmp_path)
+    D.wait("level 1")
+    out = D.d.chat({"mode": "ASK", "archetype": "regional", "text": "", "target": "pioneer"})
+    assert out["mode"] == "CHALLENGE" and out["route"]["archetype"] == "regional" and out["route"]["forced"]
+    assert out["mystery"]["boss"] == challenges.ARCHETYPES["regional"]["boss"]
+    assert out["events"][0]["result"]["text"] == challenges.ARCHETYPES["regional"]["question"]
+    with pytest.raises(DirectorError):
+        D.d.chat({"mode": "CHALLENGE", "archetype": "astrology", "target": "pioneer"})
+    D.to_bridge()
+    D.finish("inconclusive")
+
+
+def test_evidence_is_registered_as_a_source_with_its_usage(tmp_path):
+    import hashlib
+    D = Driver(tmp_path)
+    D.wait("level 1")
+    rng = np.random.default_rng(2)
+    t = rng.integers(0, 2, 200)
+    csv = "treated,event\n" + "\n".join(f"{a},{int(b)}" for a, b in zip(t, rng.random(200) < 0.3))
+    up = D.d.chat({"mode": "ADD_EVIDENCE", "file": _file("clinic.csv", csv), "target": "pioneer"})
+    src = next(e for e in up["events"] if e["action"] == "source_registered")["result"]["source"]
+    assert src["type"] == "USER_UPLOADED" and src["usage"] == "NUMERIC_TEST"
+    assert src["sha256"] == hashlib.sha256(csv.encode()).hexdigest()
+    link = D.d.chat({"mode": "ADD_EVIDENCE", "text": "A preprint says it fails in rural regions",
+                     "url": "https://www.medrxiv.org/x", "target": "pioneer"})
+    assert next(e for e in link["events"] if e["action"] == "source_registered")["result"]["source"]["usage"] == "CONTEXT"
+    cat = D.d.chat({"mode": "ADD_EVIDENCE", "text": "my cat likes tuna", "target": "pioneer"})
+    assert next(e for e in cat["events"] if e["action"] == "source_registered")["result"]["source"]["usage"] == "EXCLUDED"
+    D.d.mystery(up["mystery"]["id"], "summon")
+    D.to_bridge()
+    events = D.finish("inconclusive")
+    arc = events[-1].result["archive"]
+    assert arc["check"]["complete"], arc["check"]["problems"]
+    assert any(f"S-{up['intake']['id']}" in t["sources"] for t in arc["trace"])
+
+
+def test_the_fetcher_connects_to_the_address_it_checked(monkeypatch):
+    import http.server
+    import socket
+
+    class Page(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            kind = {"/page": "text/html", "/bin": "application/octet-stream"}.get(self.path)
+            if self.path == "/moved":
+                self.send_response(302)
+                self.send_header("Location", "http://127.0.0.1/")
+                self.end_headers()
+                return
+            body = (b"x" * 1_100_000) if self.path == "/big" else b"<title>ok</title><p>semaglutide</p>"
+            self.send_response(200)
+            self.send_header("Content-Type", kind or "text/plain")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args):
+            pass
+
+    srv = http.server.HTTPServer(("127.0.0.1", 0), Page)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    port = srv.server_address[1]
+    public = "93.184.216.34"
+    monkeypatch.setattr(evidence, "_resolve", lambda host, p, t: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", (public, p))])
+    dialed, real = [], socket.create_connection
+
+    def dial(addr, *a, **k):     # the pinned address is what gets dialled; the test then routes it to the local server
+        dialed.append(addr[0])
+        return real(("127.0.0.1", port), *a, **k)
+
+    monkeypatch.setattr(evidence.socket, "create_connection", dial)
+    f = evidence.Fetcher()
+    try:
+        ok = f(f"http://journal.example:{port}/page")
+        assert ok["ok"] and "semaglutide" in ok["text"] and ok["address"] == public and len(ok["sha256"]) == 64
+        assert dialed == [public]
+        assert "redirects" in f(f"http://journal.example:{port}/moved")["error"]
+        assert "does not read" in f(f"http://journal.example:{port}/bin")["error"]
+        assert "1 MB" in f(f"http://journal.example:{port}/big")["error"]
+        assert "user name" in f(f"http://me:pw@journal.example:{port}/page")["error"]
+    finally:
+        srv.shutdown()
+    monkeypatch.setattr(evidence, "_resolve", lambda host, p, t: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("10.1.2.3", p))])
+    assert "private" in f("http://rebound.example/page")["error"]
+
+
+def test_an_unwatched_expedition_times_out(tmp_path):
+    ledger = Ledger("t", tmp_path, model=QuestEvent)
+    q = PepQuest("t", "GLP1_ADDICTION", ledger)
+    d = Expedition(q, fetch=NO_NET)
+    q.idle_limit = 0.3
+    t = threading.Thread(target=q.run, daemon=True)
+    t.start()
+    t.join(30)
+    assert not t.is_alive() and ledger.events[-1].action == "timeout"
+    assert d.advanced == 0 and not any(e.action == "finale" for e in ledger.events)

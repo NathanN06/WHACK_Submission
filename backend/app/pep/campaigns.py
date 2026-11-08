@@ -24,9 +24,9 @@ GLP1_ADDICTION = Campaign(
     drug="Semaglutide / tirzepatide", comparator="DPP-4 inhibitors (active comparator)",
     population="Adults with type 2 diabetes or obesity and a recorded alcohol or opioid use disorder",
     n=24000,
-    outcomes=[Outcome("alcohol", "Alcohol relapse within a year", 0.38, math.log(0.65)),
-              Outcome("opioid", "Opioid relapse within a year", 0.30, math.log(0.88)),
-              Outcome("nicotine", "Smoking relapse within a year", 0.45, 0.0)],
+    outcomes=[Outcome("alcohol", "Alcohol relapse within a year", 0.38, math.log(0.65), short="Alcohol-Relapse"),
+              Outcome("opioid", "Opioid relapse within a year", 0.30, math.log(0.88), short="Opioid-Relapse"),
+              Outcome("nicotine", "Smoking relapse within a year", 0.45, 0.0, short="Smoking-Relapse")],
     confounding={"healthy": 0.35, "severity": -0.2, "therapy": 0.3, "trt": 0.1},
     risk={"healthy": -0.25, "severity": 0.35, "therapy": -0.3, "age10": -0.1},
     scrolls=[
@@ -64,9 +64,9 @@ BPC157_TENDON = Campaign(
              "and athletes who also do their rehab?",
     drug="BPC-157 / TB-500 (gray-market injections)", comparator="Physiotherapy-only rehabilitation",
     population="Adults with Achilles or rotator-cuff tendinopathy in sports-medicine clinics",
-    outcomes=[Outcome("return", "No return to sport within a year", 0.32, 0.0),
-              Outcome("reinjury", "Re-injury or rupture within a year", 0.15, 0.0),
-              Outcome("pain", "Persistent pain at a year", 0.40, 0.0)],
+    outcomes=[Outcome("return", "No return to sport within a year", 0.32, 0.0, short="Return-to-Sport"),
+              Outcome("reinjury", "Re-injury or rupture within a year", 0.15, 0.0, short="Re-Injury"),
+              Outcome("pain", "Persistent pain at a year", 0.40, 0.0, short="Persistent-Pain")],
     confounding={"healthy": 0.9, "trt": 0.6, "therapy": 0.5, "severity": -0.3},
     risk={"healthy": -0.45, "therapy": -0.35, "trt": -0.2, "severity": 0.5},
     scrolls=[
@@ -105,9 +105,9 @@ LONGEVITY_STACK = Campaign(
              "testosterone and training do the work?",
     drug="GHK-Cu / ipamorelin + CJC-1295", comparator="Matched non-users from the same longevity clinics",
     population="Adults attending longevity and men's-health clinics",
-    outcomes=[Outcome("frailty", "Lean-mass loss or frailty diagnosis within a year", 0.25, 0.0),
-              Outcome("epiage", "Epigenetic age advancing faster than calendar age", 0.45, 0.0),
-              Outcome("skin", "Dermatology visit for skin ageing within a year", 0.30, 0.0)],
+    outcomes=[Outcome("frailty", "Lean-mass loss or frailty diagnosis within a year", 0.25, 0.0, short="Lean-Mass"),
+              Outcome("epiage", "Epigenetic age advancing faster than calendar age", 0.45, 0.0, short="Epigenetic-Clock"),
+              Outcome("skin", "Dermatology visit for skin ageing within a year", 0.30, 0.0, short="Skin-Ageing")],
     confounding={"trt": 1.3, "healthy": 0.9, "therapy": 0.4},
     risk={"trt": -0.9, "healthy": -0.6, "age10": 0.2, "therapy": -0.2},
     scrolls=[
@@ -145,9 +145,9 @@ GLP1_NAION = Campaign(
              "severity and media amplification? Active comparator: SGLT2 inhibitors.",
     drug="GLP-1 receptor agonists", comparator="SGLT2 inhibitors (active comparator)",
     population="Adults with type 2 diabetes starting a second-line drug",
-    outcomes=[Outcome("naion", "NAION diagnosis within a year", 0.004, math.log(1.5)),
-              Outcome("retinopathy", "Diabetic-retinopathy progression within a year", 0.06, math.log(1.15)),
-              Outcome("vision", "Any recorded vision loss within a year", 0.02, math.log(1.05))],
+    outcomes=[Outcome("naion", "NAION diagnosis within a year", 0.004, math.log(1.5), short="NAION"),
+              Outcome("retinopathy", "Diabetic-retinopathy progression within a year", 0.06, math.log(1.15), short="Retinopathy"),
+              Outcome("vision", "Any recorded vision loss within a year", 0.02, math.log(1.05), short="Vision-Loss")],
     n=40000,
     confounding={"severity": 0.7, "age10": 0.1, "healthy": 0.1},
     risk={"severity": 0.8, "age10": 0.35},
@@ -177,7 +177,9 @@ GLP1_NAION = Campaign(
                 4: "Beat my matched SGLT2 baseline on patients you have never seen."},
     truth="In this world GLP-1 agonists raise NAION risk by half (hazard ratio 1.5) on a tiny base rate of 0.4% a year, "
           "and nudge retinopathy progression (1.15). Sicker diabetics are more likely to get them. A seven-fold risk is "
-          "not real; a small one is, but this cohort is too small to confirm it.",
+          "not real; a 1.5-fold one is, but on a risk this small knowing who took the drug barely changes anyone's "
+          "predicted risk, so the baseline can hold for prediction while the safety signal is real, and a few dozen "
+          "events leave its size very uncertain.",
     effect_direction=1,
 )
 

@@ -11,7 +11,9 @@ from collections import defaultdict
 
 from . import judge as J
 from . import rules
+from . import sources as S
 from .campaigns import ARCHETYPES
+from .world import GENERATOR_VERSION
 
 DISCLAIMER = ("SIMULATED CAMPAIGN: a synthetic world (EHR cohort, social posts, papers and trial registry) with planted, "
               "known effects, built to test the Judge. These are not real findings and not medical advice.")
@@ -84,7 +86,10 @@ def finale(q) -> dict:
         m2, m3 = a.m.get(2, {}), a.m.get(3, {})
         rows.append({
             "id": a.id, "name": a.name, "archetype": a.archetype, "title": ARCHETYPES[a.archetype]["title"],
-            "claim": a.claim, "outcome": o.label, "status": a.status, "verdict": verdict, "hp": a.hp,
+            "claim": a.claim, "outcome": o.label, "track": o.key, "status": a.status, "verdict": verdict, "hp": a.hp,
+            "science": m4.get("science") if a.encounters.get("final") else None,
+            "effect": m4.get("effect") if a.encounters.get("final") else None,
+            "champion_of": getattr(a.scroll, "champion", None),
             "credits": a.credits, "spent": a.spent, "hp_by_level": a.hp_by_level, "traps_faced": faced,
             "traps_falsified": falsified, "damage": dict(a.damage), "score": score, "buffs": list(a.buffs),
             "abilities": a.cast, "encounters": a.encounters, "design": a.st.design, "K": a.st.K,
@@ -99,25 +104,35 @@ def finale(q) -> dict:
                         "immortal_share": _r(m4.get("immortal_share")), "delta_purge": _r(m4.get("delta_purge")),
                         "rr_current": _r(m4.get("rr_current")), "rr_purged": _r(m4.get("rr_purged"))},
         })
-    rank = sorted(rows, key=lambda r: (r["status"] != "active", r["verdict"] != "VALIDATED", -r["score"]["total"]))
-    validated = [r for r in rank if r["verdict"] == "VALIDATED"]
-    champ = validated[0] if validated else None
+    # One research question per outcome: scrolls compete only with scrolls on the same outcome (a track), in the
+    # campaign's order of outcomes, the first being the campaign's primary question.
+    order = {o.key: i for i, o in enumerate(c.outcomes)}
+    rank = sorted(rows, key=lambda r: (order[r["track"]], r["status"] != "active", r["verdict"] != "VALIDATED",
+                                       -r["score"]["total"]))
+    tracks = track_table(c, rank)
+    lead = next((t for t in tracks if t["champion"]), None)     # the primary track's champion, else the first track's
+    champ = next(r for r in rank if r["id"] == lead["champion"]) if lead else None
     champion = q.agents[champ["id"]] if champ else None
     gate = ARCHETYPES["SKEPTIC"]
     benchmark = {"id": "gatekeeper", "name": gate["nickname"], "archetype": "SKEPTIC", "title": gate["title"],
                  "claim": f"{c.comparator}: no drug effect at all.", "verdict": "BASELINE", "status": "active",
                  "skill": {"ss_oos": 0.0}, "score": None}
-    brief = decision_brief(q, champion, rows)
+    brief = decision_brief(q, champion, rows, tracks)
     if champion:
         headline = f"The Alchemist emerges from the Citadel with {champion.name}: \"{champion.claim}\""
     else:
-        headline = (f"Baseline Holds. No scroll predicted unseen patients better than {_comp(c)} "
-                    "with no drug effect: inconclusive.")
+        status = brief.get("status")
+        headline = (f"Baseline Holds. No scroll predicted unseen patients better than {_comp(c)} with no drug effect"
+                    + {"SUPPORTED": ", yet the matched holdout supports a real effect: see the brief.",
+                       "REFUTED": ", and the matched holdout rules out an effect that would matter."}.get(
+                        status, ": inconclusive, which is not reassurance."))
     return {
         "headline": headline, "campaign": {"id": c.id, "letter": c.letter, "title": c.title, "question": c.question,
                                            "drug": c.drug, "comparator": c.comparator},
-        "champion": champ, "baseline_holds": champ is None, "benchmark": benchmark,
+        "champion": champ, "baseline_holds": champ is None, "benchmark": benchmark, "tracks": tracks,
         "ranking": rank, "damage": damage_breakdown(q.agents.values()), "brief": brief,
+        "science_rules": {"sesoi_rr": rules.SESOI[c.effect_direction], "power": rules.POWER, "alpha": rules.ALPHA,
+                          "statuses": rules.SCIENCE},
         "score_rules": rules.SCORE_RULES, "score_weights": rules.SCORE_WEIGHTS, "simulated": True,
         "truth": c.truth,
         "totals": {"encounters": q._enc, "credits_spent": sum(r["spent"] for r in rows),
@@ -126,9 +141,32 @@ def finale(q) -> dict:
     }
 
 
-def decision_brief(q, champion, rows) -> dict:
+def track_table(c, rank) -> list[dict]:
+    """One row per research question (outcome) a scroll carried: its champion and what the holdout says about it.
+    The status is copied from the first scroll on the track the Judge measured at the Citadel."""
+    out = []
+    for i, o in enumerate(c.outcomes):
+        mine = [r for r in rank if r["track"] == o.key]
+        if not mine:
+            continue
+        champ = next((r for r in mine if r["verdict"] == "VALIDATED"), None)
+        measured = next((r for r in mine if r.get("science")), None)
+        science = (measured["science"] if measured else
+                   {"status": "NOT ASSESSED", "why": "Every scroll on this question shattered before the Citadel, so the "
+                                                    "Judge never measured it on the holdout.", "mde_rr": None,
+                    "sesoi_rr": rules.SESOI[c.effect_direction], "below_sesoi": False})
+        out.append({"outcome": o.key, "label": o.label, "primary": i == 0, "scrolls": [r["id"] for r in mine],
+                    "champion": champ["id"] if champ else None, "champion_name": champ["name"] if champ else None,
+                    "science": science, "effect": measured["effect"] if measured else None,
+                    "cite": measured["encounters"].get("final") if measured else None})
+    return out
+
+
+def decision_brief(q, champion, rows, tracks: list[dict] | None = None) -> dict:
     c = q.c
     harm = c.effect_direction > 0
+    tracks = tracks if tracks is not None else track_table(c, rows)
+    status = None
     if champion:
         m, st = champion.m, champion.st
         m2, m3, m4 = m[2], m[3], m[4]
@@ -191,16 +229,50 @@ def decision_brief(q, champion, rows) -> dict:
     else:
         best = max((r for r in rows if r["skill"] and r["status"] == "active"),
                    key=lambda r: r["skill"]["ss_oos"] if r["skill"]["ss_oos"] is not None else -9, default=None)
-        decision = "BASELINE HOLDS: NOT SUPPORTED"
-        rec = (f"Do not act on these claims. No scroll predicted unseen patients better than {_comp(c)} "
-               f"with no drug effect, so the evidence for {_lower(c.drug)} is inconclusive.")
+        no_pred = f"No scroll predicted unseen patients better than {_comp(c)} with no drug effect"
+        assessed = [t for t in tracks if t["science"]["status"] != "NOT ASSESSED"]
+        supported = next((t for t in assessed if t["science"]["status"] == "SUPPORTED"), None)
+        word = "rise" if harm else "fall"
         evidence = []
         if best:
             evidence.append(_ev(f"Best surviving scroll: {best['name']} reached SS = {best['skill']['ss_oos']:+.4f} "
                                 f"(paired loss test p = {best['skill']['p_dm']:.3g}), which is not a reliable gain.",
                                 best["encounters"].get("final")))
-        uncertainty = ("A real effect too small for this cohort cannot be ruled out; a larger cohort or a randomised trial "
-                       "could still find one.")
+        if supported:
+            status, e = "SUPPORTED", supported["effect"]
+            o = _lower(supported["label"])
+            decision = ("BASELINE HOLDS FOR PREDICTION: SAFETY SIGNAL SUPPORTED, MONITOR IT" if harm else
+                        "BASELINE HOLDS FOR PREDICTION: A BENEFIT IS SUPPORTED, TRIAL IT FIRST")
+            rec = (f"{no_pred}. That is a verdict on prediction, not on whether the drug does anything: on the matched "
+                   f"holdout the risk of {o} does {word} with {_lower(c.drug)} (risk ratio {e['rr']:.2f}, 95% CI "
+                   f"{e['lo']:.2f} to {_hi(e['hi'])}). "
+                   + ("Treat it as a real safety signal to monitor and explain to patients, not as reassurance." if harm else
+                      "Test it in a randomised trial before anyone acts on it."))
+            evidence.append(_ev(f"{supported['label']}: SUPPORTED. {supported['science']['why']}", supported["cite"]))
+            uncertainty = (f"The interval is wide ({e['events_treated']} vs {e['events_comparator']} events), so the size of "
+                           "the effect is uncertain even though its direction is not. One simulated network, observational data.")
+        elif assessed and all(t["science"]["status"] == "REFUTED" for t in assessed):
+            status = "REFUTED"
+            sesoi = rules.SESOI[c.effect_direction]
+            decision = "BASELINE HOLDS: CLAIMS REFUTED"
+            rec = (f"Do not act on these claims. {no_pred}, and the matched holdout rules out a {word} in risk as large as "
+                   f"{abs(1 - sesoi) * 100:.0f}% (risk ratio {sesoi:.2f}) for "
+                   + ", ".join(_lower(t["label"]) for t in assessed) + ".")
+            for t in assessed:
+                evidence.append(_ev(f"{t['label']}: REFUTED. {t['science']['why']}", t["cite"]))
+            uncertainty = (f"A {word} smaller than {abs(1 - sesoi) * 100:.0f}% cannot be excluded, and questions whose "
+                           "scrolls shattered before the Citadel were never measured.")
+        else:
+            status = "INCONCLUSIVE" if assessed else "NOT ASSESSED"
+            decision = "BASELINE HOLDS: INCONCLUSIVE, NOT REASSURANCE"
+            mde = next((t["science"].get("mde_rr") for t in assessed if t["science"].get("mde_rr")), None)
+            rec = (f"Do not act on these claims, and do not read them as {'safety' if harm else 'proof of no effect'}. {no_pred}, "
+                   "and the matched holdout cannot rule out an effect that would matter"
+                   + (f": it could only reliably detect a risk ratio of {mde:.2f} or beyond." if mde else "."))
+            for t in assessed:
+                evidence.append(_ev(f"{t['label']}: {t['science']['status']}. {t['science']['why']}", t["cite"]))
+            uncertainty = ("A real effect too small for this cohort cannot be ruled out; a larger cohort or a randomised trial "
+                           "could still find one.")
     failed = []
     for r in rows:
         if champion and r["id"] == champion.id:
@@ -210,8 +282,15 @@ def decision_brief(q, champion, rows) -> dict:
             failed.append(_ev(f"{r['name']} (\"{r['claim']}\"): hardest hit by {_lower(rules.TRAP_LABELS[worst[0]])} "
                               f"({worst[1]} HP){', and shattered' if r['status'] != 'active' else ''}.",
                               r["encounters"].get(worst[0])))
+    if champion:
+        t = next((t for t in tracks if t["outcome"] == champion.st.outcome), None)
+        status = t["science"]["status"] if t else None
+        if t and t["effect"] and t["effect"].get("rr") is not None:
+            evidence.insert(1, _ev(f"Scientific status {status}: {t['science']['why']}", t["cite"]))
     return {"decision": decision, "recommendation": rec, "evidence": evidence, "misleading": failed,
-            "uncertainty": uncertainty, "truth": c.truth, "disclaimer": DISCLAIMER}
+            "uncertainty": uncertainty, "truth": c.truth, "disclaimer": DISCLAIMER, "status": status,
+            "tracks": [{"label": t["label"], "status": t["science"]["status"], "champion": t["champion_name"],
+                        "primary": t["primary"]} for t in tracks]}
 
 
 def _comp(c) -> str:
@@ -223,6 +302,10 @@ def _lower(s: str) -> str:
     """Lower-case the first letter unless the word looks like an acronym or a drug code (GLP-1, BPC-157)."""
     head = s.split(" ")[0]
     return s if head[:2].isupper() or any(ch.isdigit() for ch in head) else s[0].lower() + s[1:]
+
+
+def _hi(x) -> str:
+    return "infinity" if x is None or x == float("inf") else f"{x:.2f}"
 
 
 def _ev(text: str, cite: str | None) -> dict:
@@ -237,3 +320,25 @@ def _r(x):
     except (TypeError, ValueError):
         return x
     return float(f"{v:.4g}") if v == v and abs(v) != float("inf") else None
+
+
+def archive(q, result: dict) -> None:
+    """The Archivist's Ledger for the brief: every source, the method and sources behind every encounter, and a
+    manifest with its SHA-256 that anyone can download and re-check. It copies; it measures nothing."""
+    rows = S.trace(q.ledger.events)
+    brief = result.get("brief") or {}
+    cites = [e.get("cite") for e in (brief.get("evidence") or []) + (brief.get("misleading") or [])]
+    cites += [t.get("cite") for t in result.get("tracks") or []]
+    trial = q.trial or {}
+    used = sorted({r["method"] for r in rows} | ({"M-TRIAL"} if trial.get("evaluated") else set()))
+    ch = result.get("challenger")
+    manifest = {
+        "run_id": q.run_id, "campaign": q.c.id, "seed": q.seed, "ruleset_version": rules.RULESET_VERSION,
+        "generator": GENERATOR_VERSION, "fingerprints": q.w.fingerprints, "simulated": True,
+        "sources": q.sources.public(), "methods": {m: S.METHODS[m] for m in used if m in S.METHODS}, "trace": rows,
+        "trial": ({"method": "M-TRIAL", "sources": ["S-TRAIN", "S-VAULT2"], "spec_sha256": trial.get("sha256"),
+                   "outcome": trial.get("outcome")} if trial.get("evaluated") else None),
+        "challenger": {k: ch.get(k) for k in ("track", "round", "seed", "result", "winner", "applied")} if ch else None,
+        "check": S.validate(rows, q.sources, cites),
+    }
+    result["archive"] = {**manifest, "sha256": S.digest(manifest)}

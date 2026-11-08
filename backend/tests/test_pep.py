@@ -125,10 +125,11 @@ def test_every_encounter_carries_the_telemetry_record(tmp_path):
     tele = [e.encounter for e in events if e.encounter]
     assert tele and result["totals"]["encounters"] == len(tele)
     keys = {"encounterId", "campaignType", "level", "enemyName", "trapType", "scrollId", "scrollTitle",
-            "heroAction", "biostatMetrics", "combatResolution"}
+            "heroAction", "biostatMetrics", "combatResolution", "methodId", "sourceIds", "rulesetVersion"}
     for t in tele:
         assert set(t) == keys
         assert t["trapType"] == rules.TRAPS[t["level"]]
+        assert t["rulesetVersion"] == rules.RULESET_VERSION and t["sourceIds"]
         cr = t["combatResolution"]
         assert set(cr) == {"rawDamage", "abilityMultiplier", "clampedHpDelta", "executedFormulaLatex",
                            "plainEnglishVerdict"}
@@ -222,3 +223,102 @@ def test_the_brief_only_claims_what_the_champion_did(tmp_path):
     texts = " ".join(e["text"] for e in report.decision_brief(q, champ, [])["evidence"])
     assert "Not time-zero aligned" in texts and "Not adjusted" in texts and "Does not survive" in texts
     assert "with no immortal time" not in texts
+
+
+# ---------- point-in-time training ----------
+
+@pytest.mark.parametrize("cid", list(CAMPAIGNS))
+def test_training_reads_nothing_after_the_cutoff(cid):
+    from app.pep.world import TRAIN_END
+    w = World(CAMPAIGNS[cid])
+    train = w.mask("train")
+    for o in w.c.outcomes:
+        for design in ("ever", "new_user"):
+            assert w.rows(o.key, design, train)["end_day"].max() <= TRAIN_END
+        assert w.new_user(o.key, train, TRAIN_END)["end_day"].max() <= TRAIN_END
+    with pytest.raises(ValueError):
+        w.rows(w.c.outcomes[0].key, "ever", w.mask("holdout"))
+
+
+def test_the_ablation_reads_only_the_training_years_and_leaves_the_split_alone():
+    w = World(CAMPAIGNS["GLP1_ADDICTION"])
+    asked, real = [], w.mask
+    w.mask = lambda split: asked.append(split) or real(split)
+    split = w.split
+    keep, g = J.ablation_keeps_drug(w, J.ScrollState(outcome="alcohol", design="new_user", adjusted=True))
+    assert set(asked) == {"train"} and w.split is split
+    assert g["matched_pairs"] > 0
+
+
+# ---------- scientific status ----------
+
+@pytest.mark.parametrize("d,lo,hi,status", [
+    (-1, 0.60, 0.90, "SUPPORTED"), (-1, 0.85, 1.10, "REFUTED"), (-1, 0.60, 1.30, "INCONCLUSIVE"), (-1, 1.10, 1.50, "REFUTED"),
+    (1, 1.10, 2.00, "SUPPORTED"), (1, 0.90, 1.20, "REFUTED"), (1, 0.80, 3.00, "INCONCLUSIVE"),
+    (1, None, None, "NOT ASSESSED")])
+def test_science_status_reads_the_interval_against_no_effect_and_the_smallest_effect_of_interest(d, lo, hi, status):
+    rr = None if lo is None else math.sqrt(lo * hi)
+    s = J.science_status({"rr": rr, "lo": lo, "hi": hi, "mde_rr": 1.5}, d)
+    assert s["status"] == status and s["why"]
+    assert J.science_status({"rr": 0.9, "lo": 0.85, "hi": 0.95}, -1)["below_sesoi"]   # real, but smaller than matters
+
+
+def test_sparse_events_get_the_exact_interval_and_common_ones_the_wald_interval():
+    t = np.r_[np.ones(1000), np.zeros(1000)]
+    rare = np.zeros(2000)
+    rare[:6], rare[1000:1002] = 1, 1
+    e = J.matched_effect(rare, t, 1)
+    assert e["method"].startswith("exact") and e["rr"] == pytest.approx(3.0) and e["lo"] < 3.0 < e["hi"]
+    none = J.matched_effect(np.r_[np.ones(3), np.zeros(1997)], t, 1)          # no comparator events at all
+    assert math.isinf(none["rr"]) and math.isinf(none["hi"]) and none["lo"] > 0
+    common = np.zeros(2000)
+    common[:300], common[1000:1400] = 1, 1
+    w = J.matched_effect(common, t, -1)
+    assert w["method"].startswith("Wald") and w["rr"] == pytest.approx(0.75) and w["hi"] < 1
+    assert J.matched_effect(np.zeros(0), np.zeros(0), -1)["rr"] is None
+
+
+def test_the_detectable_effect_shrinks_with_more_patients():
+    small, big = J.detectable_rr(200, 200, 0.3, -1), J.detectable_rr(5000, 5000, 0.3, -1)
+    assert small < big < 1
+    assert J.detectable_rr(5000, 5000, 0.004, 1) > 1.25 and J.detectable_rr(5000, 5000, 0.0, 1) is None
+
+
+def test_every_campaign_states_the_science_of_each_question(tmp_path):
+    for cid in CAMPAIGNS:
+        _, result = run(cid, tmp_path)
+        tracks = result["tracks"]
+        assert tracks and tracks[0]["primary"] and all(t["science"]["status"] in rules.SCIENCE for t in tracks)
+        assert result["brief"]["status"] in rules.SCIENCE
+    b = run("BPC157_TENDON", tmp_path)[1]["brief"]
+    assert b["decision"] == "BASELINE HOLDS: CLAIMS REFUTED"
+    d = run("GLP1_NAION", tmp_path)[1]["brief"]
+    assert d["decision"].startswith("BASELINE HOLDS") and "NOT SUPPORTED" not in d["decision"]
+    assert "reassurance" in d["recommendation"]
+
+
+def test_scrolls_compete_only_within_their_outcome_track(tmp_path):
+    ledger = Ledger("t6", tmp_path, model=QuestEvent)
+    result = PepQuest("t6", "GLP1_ADDICTION", ledger, ScriptedHero(), n_scrolls=6).run()
+    order = [o.key for o in CAMPAIGNS["GLP1_ADDICTION"].outcomes]
+    ranks = [order.index(r["track"]) for r in result["ranking"]]
+    assert ranks == sorted(ranks)                                    # the ranking is grouped by question
+    for t in result["tracks"]:
+        champ = next((r for r in result["ranking"] if r["id"] == t["champion"]), None)
+        assert champ is None or (champ["track"] == t["outcome"] and champ["verdict"] == "VALIDATED")
+    lead = next(t for t in result["tracks"] if t["champion"])
+    assert result["champion"]["id"] == lead["champion"]
+
+
+def test_the_archive_traces_every_encounter_to_registered_sources(tmp_path):
+    from app.pep import sources as S
+    events, result = run("GLP1_ADDICTION", tmp_path)
+    arc = result["archive"]
+    assert arc["check"]["complete"], arc["check"]["problems"]
+    assert arc["sha256"] == S.digest({k: v for k, v in arc.items() if k != "sha256"})
+    ids = {s["id"] for s in arc["sources"]}
+    assert {"S-TRAIN", "S-HOLDOUT", "S-VAULT2", "S-CORPUS"} <= ids
+    assert all(set(t["sources"]) <= ids and t["method"] in S.METHODS for t in arc["trace"])
+    assert len(arc["trace"]) == result["totals"]["encounters"]
+    start = events[0].result
+    assert start["ruleset_version"] == rules.RULESET_VERSION and start["dataset"]["fingerprints"]["vault2"] == arc["fingerprints"]["vault2"]

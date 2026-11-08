@@ -7,6 +7,8 @@ HP a scroll loses across the level equals the formula exactly. Level 4 has two s
 Chronolock (immortal time) and the Guardian (out-of-sample skill against the active comparator).
 """
 
+RULESET_VERSION = "pep-2026.11.08-r2"   # bump on any change to a rule, threshold or formula in this file
+
 STARTING_HP = 100
 STARTING_CREDITS = 100
 D_MAX = {1: 20, 2: 30, 3: 45, 4: 60}
@@ -123,6 +125,21 @@ VERDICTS = {
     "SHATTERED": "The scroll's research integrity reached 0 HP.",
 }
 
+# ---------- Scientific status: what the matched holdout says about the drug itself ----------
+# HP and the verdict score how well a scroll was tested. The status answers a different question, the same for every
+# scroll on one outcome: did the drug change that outcome by an amount that matters? "No better than the baseline"
+# is not reassurance when the cohort was too small to see an effect that would matter.
+SESOI = {-1: 0.80, 1: 1.25}     # smallest effect of interest: a 20% cut in risk for a benefit, a 25% rise for a harm
+RARE_RISK = 0.05                # comparator risk below this: the exact conditional interval
+SPARSE_EVENTS = 5               # fewer events than this in either arm: the exact conditional interval too
+POWER = 0.80                    # the detectable effect is the smallest risk ratio found with this power at ALPHA
+SCIENCE = {
+    "SUPPORTED": "The 95% interval for the drug's risk ratio on unseen matched patients excludes no effect, in the claimed direction.",
+    "REFUTED": "The 95% interval excludes the smallest effect of interest: any effect in the claimed direction is too small to matter.",
+    "INCONCLUSIVE": "The 95% interval includes both no effect and an effect that would matter: these patients cannot tell them apart.",
+    "NOT ASSESSED": "No matched users and comparators with events, so the drug's effect could not be estimated.",
+}
+
 
 # ---------- The Research Director's console: Mystery Bosses, the Bridge of Judgment, the Trial of Truth ----------
 # HP is research integrity, not the probability that a claim is true. These rules reward honest, meaningful
@@ -131,9 +148,11 @@ VERDICTS = {
 MYSTERY_D_MAX = 15          # a Mystery Boss never takes more than this from a scroll
 MYSTERY_HP = {
     "SURVIVED": +3,         # ran a meaningful additional test and the claim held: a modest reward
+    "SURVIVED_AGAIN": 0,    # the same family of test already rewarded this scroll once: asking again earns nothing
     "FALLEN": -10,          # the test exposed a real weakness the scroll had not guarded against
     "FALLEN_LEAKAGE": -15,  # the weakness was future information (the gravest methodological flaw)
     "UNRESOLVED": 0,        # no valid test could be run: nothing is decided, nothing is lost
+    "REPEAT": 0,            # the identical test on the identical scroll: not re-run, since the same data gives the same answer
 }
 MYSTERY_TEST_COST = 10      # credits a focused re-test costs during the Evolution Trial
 PERMUTATIONS = 199          # label shuffles for the Probability Phantom

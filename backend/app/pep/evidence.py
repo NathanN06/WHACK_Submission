@@ -14,13 +14,15 @@ from __future__ import annotations
 import base64
 import binascii
 import csv
+import hashlib
+import http.client
 import io
 import ipaddress
 import re
 import socket
+import ssl
+import threading
 import time
-import urllib.error
-import urllib.request
 from urllib.parse import urlparse
 
 from . import rules
@@ -47,50 +49,116 @@ SOURCE_TYPES = [  # (domain suffixes, type, evidence tier label, tier)
 ]
 
 MAX_FETCH_BYTES = 1_000_000
-FETCH_TIMEOUT = 6
+FETCH_DEADLINE = 3.0        # seconds for the whole fetch: resolving, connecting and reading
+FETCH_TYPES = ("text/html", "application/xhtml+xml", "text/plain", "text/csv", "text/markdown", "application/json")
 STOPWORDS = set("the a an and or of to in on for with that this is are was were be been it its as at by from than "
                 "more less into over under not no new study studies says claims claim show shows showed found "
                 "find i you we they he she have has had do does did can could would should may might".split())
 
 
 class Fetcher:
-    """Retrieves a URL safely: http(s) only, public addresses only, no redirects, size and time limits."""
+    """Retrieves a URL safely. http(s) only, no user name or password in the link, and only public (globally routable)
+    addresses. The address that was checked is the address connected to: the connection is pinned to it, so a second
+    DNS answer cannot swap in a private one (DNS rebinding). TLS still verifies the certificate for the host name.
+    Redirects are never followed. One deadline covers the whole fetch, and the body, its size and its type are capped."""
 
     def __call__(self, url: str) -> dict:
         p = urlparse(url)
         if p.scheme not in ("http", "https") or not p.hostname:
             return {"ok": False, "error": "only http and https links can be retrieved"}
+        if p.username is not None or p.password is not None:
+            return {"ok": False, "error": "links that carry a user name or password are never fetched"}
         try:
-            infos = socket.getaddrinfo(p.hostname, p.port or (443 if p.scheme == "https" else 80))
-        except OSError as e:
-            return {"ok": False, "error": f"the host could not be resolved ({e.__class__.__name__})"}
+            port = p.port or (443 if p.scheme == "https" else 80)
+        except ValueError:
+            return {"ok": False, "error": "the link has an invalid port"}
+        deadline = time.monotonic() + FETCH_DEADLINE
+        infos = _resolve(p.hostname, port, FETCH_DEADLINE)
+        if isinstance(infos, str):
+            return {"ok": False, "error": infos}
+        addrs = []
         for info in infos:
-            ip = ipaddress.ip_address(info[4][0])
-            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast:
+            ip = ipaddress.ip_address(info[4][0].split("%", 1)[0])
+            if not ip.is_global or ip.is_multicast:
                 return {"ok": False, "error": "the link points at a private or local address, which is never fetched"}
-        opener = urllib.request.build_opener(_NoRedirect)
-        req = urllib.request.Request(url, headers={"User-Agent": "HypothesisGauntlet-EvidenceCheck/1.0",
-                                                   "Accept": "text/html,text/plain,text/csv,application/json"})
+            addrs.append(str(ip))
+        if not addrs:
+            return {"ok": False, "error": "the host could not be resolved"}
+        conn = (_PinnedHTTPS(p.hostname, addrs[0], port, FETCH_DEADLINE) if p.scheme == "https"
+                else _PinnedHTTP(p.hostname, addrs[0], port, FETCH_DEADLINE))
+        path = (p.path or "/") + (f"?{p.query}" if p.query else "")
         try:
-            with opener.open(req, timeout=FETCH_TIMEOUT) as r:
-                body = r.read(MAX_FETCH_BYTES + 1)
-                ctype = r.headers.get("Content-Type", "")
-                status = r.status
-        except urllib.error.HTTPError as e:
-            if 300 <= e.code < 400:
-                return {"ok": False, "error": f"the link redirects (HTTP {e.code}); submit the final address instead"}
-            return {"ok": False, "error": f"the server answered HTTP {e.code}"}
-        except Exception as e:  # network policy, timeout, TLS: all mean "not retrieved"
+            conn.request("GET", path, headers={"User-Agent": "HypothesisGauntlet-EvidenceCheck/1.1",
+                                               "Accept": ", ".join(FETCH_TYPES), "Accept-Encoding": "identity",
+                                               "Connection": "close"})
+            r = conn.getresponse()
+            if 300 <= r.status < 400:
+                return {"ok": False, "error": f"the link redirects (HTTP {r.status}); submit the final address instead"}
+            if r.status >= 400:
+                return {"ok": False, "error": f"the server answered HTTP {r.status}"}
+            ctype = r.getheader("Content-Type", "") or ""
+            if ctype.split(";")[0].strip().lower() not in FETCH_TYPES:
+                return {"ok": False, "error": f"the server sent {ctype or 'no content type'}, which the checker does not read"}
+            body = bytearray()
+            while True:
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    return {"ok": False, "error": f"the source took longer than {FETCH_DEADLINE:g} seconds to send"}
+                if conn.sock is not None:
+                    conn.sock.settimeout(left)
+                chunk = r.read1(65536) if hasattr(r, "read1") else r.read(65536)
+                if not chunk:
+                    break
+                body += chunk
+                if len(body) > MAX_FETCH_BYTES:
+                    return {"ok": False, "error": "the page is larger than the 1 MB the checker reads"}
+        except Exception as e:  # network policy, timeout, TLS, a malformed reply: all mean "not retrieved"
             return {"ok": False, "error": f"the source could not be retrieved ({e.__class__.__name__}: {str(e)[:120]})"}
-        if len(body) > MAX_FETCH_BYTES:
-            return {"ok": False, "error": "the page is larger than the 1 MB the checker reads"}
-        return {"ok": True, "status": status, "content_type": ctype, "bytes": len(body),
-                "text": body.decode("utf-8", errors="replace")}
+        finally:
+            conn.close()
+        return {"ok": True, "status": r.status, "content_type": ctype, "bytes": len(body), "address": addrs[0],
+                "sha256": hashlib.sha256(bytes(body)).hexdigest(), "text": bytes(body).decode("utf-8", errors="replace")}
 
 
-class _NoRedirect(urllib.request.HTTPRedirectHandler):
-    def redirect_request(self, *args, **kwargs):  # never follow: a redirect could lead to a private address
-        return None
+def _resolve(host: str, port: int, timeout: float):
+    """getaddrinfo with a deadline (it has none of its own). A list of address records, or an error message."""
+    out: dict = {}
+
+    def run():
+        try:
+            out["infos"] = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        except OSError as e:
+            out["error"] = f"the host could not be resolved ({e.__class__.__name__})"
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout)
+    if t.is_alive():
+        return "the host took too long to resolve"
+    return out.get("error") or out.get("infos") or "the host could not be resolved"
+
+
+class _PinnedHTTP(http.client.HTTPConnection):
+    """An HTTP connection to one already-checked address; the Host header still names the host."""
+
+    def __init__(self, host: str, address: str, port: int, timeout: float):
+        super().__init__(host, port, timeout=timeout)
+        self._address = address
+
+    def connect(self):
+        self.sock = socket.create_connection((self._address, self.port), self.timeout)
+
+
+class _PinnedHTTPS(http.client.HTTPSConnection):
+    """An HTTPS connection to one already-checked address, verifying the certificate for the host name (SNI)."""
+
+    def __init__(self, host: str, address: str, port: int, timeout: float):
+        super().__init__(host, port, timeout=timeout, context=ssl.create_default_context())
+        self._address = address
+
+    def connect(self):
+        sock = socket.create_connection((self._address, self.port), self.timeout)
+        self.sock = self._context.wrap_socket(sock, server_hostname=self.host)
 
 
 def source_type(url: str) -> dict:
@@ -210,6 +278,7 @@ def intake(sub: dict, ctx: dict, route: dict, fetch=None) -> dict:
         else:
             got = (fetch or Fetcher())(rec["url"])
             rec["retrieval"] = {k: v for k, v in got.items() if k != "text"}
+            rec["sha256"] = got.get("sha256")
             if got.get("ok"):
                 ctype = got.get("content_type", "")
                 page = read_page(got["text"]) if "html" in ctype or got["text"].lstrip().startswith("<") else \
@@ -250,6 +319,7 @@ def _intake_file(rec: dict, sub: dict) -> None:
         rec["missing"].append("a readable file")
         return
     rec["retrieval"] = {"ok": True, "bytes": len(raw)}
+    rec["sha256"] = hashlib.sha256(raw).hexdigest()
     if len(raw) > rules.UPLOAD_MAX_BYTES:
         rec["classification"] = "INVALID OR INCOMPATIBLE DATA"
         rec["missing"].append("a file under 1 MB")

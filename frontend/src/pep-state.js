@@ -1,9 +1,10 @@
 // The game state is a fold over the ledger: every number on screen comes from a ledger row.
 // Pure enough to test in node:  const { initial, reduce, replay } = require("./pep-state.js").
 //
-// One hero, the Alchemist, carries three hypothesis scrolls (s.agents, in s.order). Each scroll has its
+// One hero, the Alchemist, carries two to six hypothesis scrolls (s.agents, in s.order). Each scroll has its
 // own HP and credits and shatters at 0 HP. The Gatekeeper Skeptic is not a scroll: it speaks (s.gate)
-// and holds the baseline the Guardian judges against.
+// and holds the baseline the Guardian judges against. The Archivist's Ledger (s.sources, s.methods) names every
+// source a number can come from; a Challenger round (s.challenger, s.championUpdate) is one round of a title track.
 
 const NODES = [
   { level: 1, numeral: "I" }, { level: 2, numeral: "II" }, { level: 3, numeral: "III" }, { level: 4, numeral: "IV" },
@@ -17,7 +18,8 @@ function initial() {
     agents: {}, order: [], active: null,
     enemy: null, fighter: null, last: null, gate: null, benchmark: false,
     events: [], encounters: 0, traps: { faced: 0, falsified: 0 }, shattered: 0,
-    finale: null, stopped: false, error: null,
+    finale: null, stopped: false, timedOut: false, error: null,
+    sources: [], methods: {}, rulesetVersion: null, dataset: null, challenger: null, championUpdate: null,
     // the Research Director's console and the endgame
     chat: [], mysteries: {}, intakes: [], mystery: null, adjust: [], secret: null,
     bridge: null, assessment: null, choice: null, evolution: null, version: "V1", spec: null, trial: null,
@@ -37,6 +39,7 @@ function agentFrom(a) {
   return {
     id: a.id, name: a.name, archetype: a.archetype, cls: a.cls, title: a.title, nickname: a.nickname,
     claim: a.claim, outcome: a.outcome, origin: a.origin, design: a.design, K: a.K,
+    track: a.track || a.outcome, version: a.version || "V1", parent: a.parent || null, champion: a.champion || null,
     evidence: a.evidence || "simulated", realEvidence: a.real_evidence || null, how: "",
     hp: a.hp, credits: a.credits, buffs: a.buffs || [],
     status: "active", verdict: null, abilities: {}, lastDelta: null, lines: {},
@@ -61,6 +64,21 @@ function reduce(s, e) {
     case "quest_start":
       s.campaign = r.campaign; s.rules = r.rules; s.archetypes = r.archetypes; s.simulated = r.simulated !== false;
       s.hero = r.hero || null; s.gatekeeper = r.gatekeeper || null;
+      s.rulesetVersion = r.ruleset_version || null; s.dataset = r.dataset || null;
+      break;
+    // ---------- the Archivist's Ledger: every source a number can come from ----------
+    case "sources_registered":
+      s.sources = (r.sources || []).slice(); s.methods = r.methods || {};
+      break;
+    case "source_registered":
+      if (r.source) s.sources = s.sources.filter((x) => x.id !== r.source.id).concat([r.source]);
+      break;
+    // ---------- Challenger Mode ----------
+    case "challenger_roster":
+      s.challenger = r;
+      break;
+    case "champion_update":
+      s.championUpdate = r;
       break;
     case "hypotheses":
       s.hypotheses = r;   // how the Scribe formed the scrolls, and the real evidence counts it copied
@@ -106,6 +124,9 @@ function reduce(s, e) {
       break;
     case "stopped":
       s.stopped = true;
+      break;
+    case "timeout":   // nobody watched the expedition, so the server stopped it
+      s.stopped = true; s.timedOut = true;
       break;
     // ---------- the Research Director's console ----------
     case "chat":
@@ -211,13 +232,14 @@ function filterEvents(events, f = {}) {
 // How long a row stays on screen at 1x, in ms.
 function beat(e) {
   if (e.action === "result" && e.result && e.result.scout && !e.hp_delta) return 650;
-  return { quest_start: 500, hypotheses: 2200, recruit: 900, gatekeeper: 2200, benchmark: 2000, level_start: 1500, decision: 950,
+  return { quest_start: 500, hypotheses: 2200, sources_registered: 1400, source_registered: 0, challenger_roster: 2600,
+           champion_update: 2600, timeout: 500, recruit: 900, gatekeeper: 2200, benchmark: 2000, level_start: 1500, decision: 950,
            encounter: 900, result: 1300, shatter: 1700, level_complete: 300, finale: 300,
            chat: 0, hero_reply: 0, evidence_intake: 0, mystery_offer: 0, mystery_unresolved: 0, mystery_saved: 0,
            mystery_cancelled: 0, mystery_summon: 1100, mystery_encounter: 1300, mystery_ability: 1000, mystery_result: 2200,
            mystery_return: 900, secret_level_start: 1800, secret_level_complete: 1200,
            bridge_enter: 2600, self_assessment: 600, bridge_choice: 1200, evolution_start: 1500, evolution_transform: 2600,
-           evolution_step: 1500, evolution_complete: 1800, spec_locked: 1800, trial_result: 3600 }[e.action] || 500;
+           evolution_step: 1500, evolution_complete: 1800, spec_locked: 1800, trial_result: 3600 }[e.action] ?? 500;   // 0 = no pause
 }
 
 function findEncounter(events, id) {

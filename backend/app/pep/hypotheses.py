@@ -5,6 +5,9 @@ which outcome it claims and which evidence topic it rests on, and how it was fou
 It never writes a number. The scroll's evidence is then attached by code, copied straight from the
 database: the real papers behind its topic (species, lab) for Level II and III, and the count of completed
 randomized trials for Level III. The social corpus and the patient cohort stay simulated (world.py).
+
+The Judge tests a scroll by its outcome and its archetype (which decides the abilities and the search), so two
+scrolls that share both would be tested identically: a structural duplicate. The Scribe never forms one.
 """
 
 from __future__ import annotations
@@ -20,8 +23,10 @@ from pydantic import BaseModel, Field, field_validator
 from .world import Campaign, Literature, Scroll
 
 DB_PATH = Path(__file__).resolve().parents[3] / "data" / "pep_evidence.duckdb"
+MIN_SCROLLS = 2
 MAX_SCROLLS = 6
 ARCHETYPE_ORDER = ["HYPE", "PIONEER", "PREPRINT"]
+FILL_ORDER = ["PIONEER", "PREPRINT", "HYPE"]    # the script adds careful claims first, across every outcome
 
 # Evidence topics per campaign (scripts/download_pep_evidence.py) and the default topic for each outcome.
 TOPICS = {
@@ -136,6 +141,7 @@ Do not repeat or lightly reword any title in "already_written"; every hypothesis
              "Semaglutide cuts alcohol relapse" or "BPC-157 speeds tendon healing" (no fantasy names)
   claim:     one sentence (under forty words) stating what the drug does to that outcome versus the comparator
   origin:    where such a claim comes from, grounded in the evidence summary (under twenty-five words)
+No two hypotheses may share both their outcome and their archetype: the Judge would test them identically.{avoid}
 Never write numbers, effect sizes or p-values: a deterministic Statistical Judge measures everything.
 Reply with JSON only: {{"hypotheses": [{{"title": ..., "claim": ..., "outcome": ..., "topic": ..., "archetype": ..., "origin": ...}}]}}"""
 
@@ -168,23 +174,50 @@ def _summary(c: Campaign, ev: dict | None, rng: random.Random | None = None) -> 
     return {"topics": topics, "faers_adverse_event_reports": ev["faers"], "already_written": recent}
 
 
-def scripted(c: Campaign, n: int) -> list[_Hypothesis]:
-    """Without Claude: the campaign's own scrolls first, then one plain claim per remaining outcome and archetype."""
-    out = [_Hypothesis(title=s.title, claim=s.claim, outcome=s.outcome, topic=_default_topic(c, s.outcome, i, s.claim),
-                       archetype=s.archetype, origin=s.origin[:260] or "the campaign brief")
-           for i, s in enumerate(c.scrolls[:n])]
-    verb = "lowers" if c.effect_direction < 0 else "raises"
-    comp = c.comparator.replace(" (active comparator)", "")
-    i = len(out)
-    while len(out) < n:
-        o = c.outcomes[i % len(c.outcomes)]
-        arch = ARCHETYPE_ORDER[i % len(ARCHETYPE_ORDER)]
-        label = o.label if o.label[1:2].isupper() else o.label[0].lower() + o.label[1:]
-        out.append(_Hypothesis(title=f"The {o.key.capitalize()} Scroll", archetype=arch,
-                               claim=f"Taking {c.drug} {verb} the risk of {label} compared with {comp}.",
-                               outcome=o.key, topic=_default_topic(c, o.key, i), origin="the real literature summary"))
-        i += 1
+def signature(h) -> tuple[str, str]:
+    """A scroll's structure: its outcome and its archetype. Two scrolls with the same one are duplicates."""
+    return (h.outcome, h.archetype)
+
+
+def scripted(c: Campaign, n: int, exclude=(), prefer: str | None = None) -> list[_Hypothesis]:
+    """Without Claude: the campaign's own scrolls first, then every unused (outcome, archetype) structure, careful
+    claims first and across every outcome. None repeats another's structure or an excluded one. `prefer` puts
+    the scrolls on that outcome first (a Challenger round fills its title track before the others)."""
+    pool = [_Hypothesis(title=s.title, claim=s.claim, outcome=s.outcome, topic=_default_topic(c, s.outcome, i, s.claim),
+                        archetype=s.archetype, origin=s.origin[:260] or "the campaign brief")
+            for i, s in enumerate(c.scrolls)]
+    for arch in FILL_ORDER:
+        for o in c.outcomes:
+            pool.append(_generated(c, o, arch, len(pool)))
+    if prefer:
+        pool = [h for h in pool if h.outcome == prefer] + [h for h in pool if h.outcome != prefer]
+    out, seen = [], set(exclude)
+    for h in pool:
+        if len(out) == n:
+            break
+        if signature(h) not in seen:
+            out.append(h)
+            seen.add(signature(h))
     return out
+
+
+def _generated(c: Campaign, o, arch: str, i: int) -> _Hypothesis:
+    """A plain claim in the voice of its archetype. Titles name the outcome: "The Pilot Re-Injury Scroll"."""
+    verb = "lowers" if c.effect_direction < 0 else "raises"
+    comp = c.comparator.split(" (")[0]
+    drug = c.drug.split(" (")[0]
+    label = o.label if o.label[1:2].isupper() else o.label[0].lower() + o.label[1:]
+    short = o.short or o.key.capitalize()
+    title, claim, origin = {
+        "PIONEER": (f"The {short} Scroll", f"Compared with {comp}, {drug} {verb} the risk of {label}.",
+                    "the real literature summary"),
+        "PREPRINT": (f"The Pilot {short} Scroll", f"A small open-label clinic log suggests {drug} {verb} the risk of {label}.",
+                     "a small clinic log posted as a preprint"),
+        "HYPE": (f"The Viral {short} Scroll", f"Forums and influencers swear that {drug} {verb} the risk of {label}.",
+                 "a viral thread and its reposts"),
+    }[arch]
+    return _Hypothesis(title=title[:60], claim=claim[:320], outcome=o.key, topic=_default_topic(c, o.key, i),
+                       archetype=arch, origin=origin)
 
 
 def _default_topic(c: Campaign, outcome: str, i: int, claim: str = "") -> str:
@@ -198,12 +231,14 @@ def _default_topic(c: Campaign, outcome: str, i: int, claim: str = "") -> str:
     return DEFAULT_TOPIC.get(c.letter, {}).get(outcome) or (topics[i % len(topics)] if topics else "")
 
 
-def ask_claude(complete, c: Campaign, n: int, ev: dict | None,
+def ask_claude(complete, c: Campaign, n: int, ev: dict | None, exclude=(),
                rng: random.Random | None = None) -> list[_Hypothesis] | None:
     from ..arena.agents import ask
     rng = rng or random.Random()
+    avoid = (" These outcome and archetype pairs are already taken, so avoid them too: "
+             + "; ".join(f"{o} + {a}" for o, a in sorted(exclude)) + ".") if exclude else ""
     system = SYSTEM.format(n=n, question=c.question, drug=c.drug, comparator=c.comparator, population=c.population,
-                           outcomes={o.key: o.label for o in c.outcomes}, topics=TOPICS.get(c.letter, {}),
+                           outcomes={o.key: o.label for o in c.outcomes}, topics=TOPICS.get(c.letter, {}), avoid=avoid,
                            angles="; ".join(rng.sample(ANGLES, 3)))
     reply = ask(complete, system, _summary(c, ev, rng), _Hypotheses)
     return reply.hypotheses if reply else None
@@ -211,21 +246,39 @@ def ask_claude(complete, c: Campaign, n: int, ev: dict | None,
 
 # ---------------------------------------------------------------- scrolls
 
-def form(c: Campaign, n: int, complete=None, db_path: Path = DB_PATH) -> tuple[list[Scroll], dict]:
-    """N scrolls for campaign c and a record of how they were formed (for the ledger)."""
-    n = max(1, min(MAX_SCROLLS, int(n)))
+def form(c: Campaign, n: int, complete=None, db_path: Path = DB_PATH, exclude=(),
+         prefer: str | None = None, minimum: int = MIN_SCROLLS) -> tuple[list[Scroll], dict]:
+    """N scrolls for campaign c (2 to 6) and a record of how they were formed (for the ledger). `exclude` holds
+    structures already taken (a Challenger round's incumbent); `prefer` an outcome to fill first."""
+    n = max(minimum, min(MAX_SCROLLS, int(n)))
     ev = load_evidence(c.letter, db_path)
-    hyps, source = None, "script"
+    hyps, source, rejected = [], "script", 0
+    seen = set(exclude)
     if complete is not None:
-        got = ask_claude(complete, c, n, ev)
-        if got:
-            good = [h for h in got if _valid(h, c)][:n]
-            if good:
-                hyps, source = good, "claude"
-                _RECENT.setdefault(c.letter, deque(maxlen=18)).extend(h.title for h in good)
-    hyps = (hyps or []) + scripted(c, n)[len(hyps or []):]   # any slot Claude left empty is filled by the script
+        got = ask_claude(complete, c, n, ev, exclude)
+        for h in (got or []):
+            if len(hyps) == n or not _valid(h, c):
+                continue
+            if signature(h) in seen:
+                rejected += 1
+                continue
+            hyps.append(h)
+            seen.add(signature(h))
+        if hyps:
+            source = "claude"
+            _RECENT.setdefault(c.letter, deque(maxlen=18)).extend(h.title for h in hyps)
+    # Any slot Claude left empty takes the script's scroll for that position, or its next unused structure.
+    pool = scripted(c, len(c.outcomes) * len(ARCHETYPE_ORDER), exclude, prefer)
+    for i in range(len(hyps), n):
+        pick = pool[i] if i < len(pool) and signature(pool[i]) not in seen else \
+            next((h for h in pool if signature(h) not in seen), None)
+        if pick is None:
+            break
+        hyps.append(pick)
+        seen.add(signature(pick))
     scrolls = [_scroll(c, h, i, ev) for i, h in enumerate(hyps)]
     info = {"count": len(scrolls), "source": source, "evidence": "real" if ev else "simulated",
+            "duplicates_rejected": rejected, "structures": [list(signature(h)) for h in hyps],
             "topics": {k: {key: v[key] for key in ("label", "papers_found", "papers_stored", "species",
                                                    "unknown_species", "trials", "completed_rcts")}
                        for k, v in (ev or {}).get("topics", {}).items()},
@@ -242,3 +295,15 @@ def _scroll(c: Campaign, h: _Hypothesis, i: int, ev: dict | None) -> Scroll:
                  "evidence_topic": h.topic, "evidence_real": True}
     return dataclasses.replace(template, key=f"h{i + 1}", title=h.title, claim=h.claim, outcome=h.outcome,
                                origin=h.origin, **extra)
+
+
+def incumbent(c: Campaign, champ: dict, db_path: Path = DB_PATH) -> Scroll:
+    """The reigning champion as a scroll: its frozen words and structure, its evidence copied again from the database.
+    Its key is "champion"; everything the Judge measures about it is measured afresh."""
+    spec = champ["spec"]
+    topic = spec.get("evidence_topic") or _default_topic(c, spec["outcome"], 0, spec["claim"])
+    h = _Hypothesis(title=spec["title"][:60], claim=spec["claim"][:320], outcome=spec["outcome"], topic=topic,
+                    archetype=spec["archetype"], origin=(spec.get("origin") or "a previous Challenger round")[:260])
+    s = _scroll(c, h, 0, load_evidence(c.letter, db_path))
+    return dataclasses.replace(s, key="champion", champion={k: champ.get(k) for k in (
+        "hid", "claim_hash", "won_round", "defended", "not_defended", "last_round")})

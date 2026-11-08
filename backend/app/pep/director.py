@@ -25,6 +25,8 @@ from scipy import stats
 from . import challenges as C
 from . import evidence as EV
 from . import rules
+from . import sources as S
+from .world import TRAIN_END
 
 MODES = ("ASK", "CHALLENGE", "ADD_EVIDENCE", "NEW_HYPOTHESIS", "SUMMON")
 OPEN = ("offered", "saved")                 # waiting for the Director
@@ -57,6 +59,8 @@ class Expedition:
         self.intakes: list[dict] = []
         self.mysteries: dict[str, dict] = {}
         self.secret_levels: list[dict] = []
+        self.looks: dict[str, int] = {}          # tests a Mystery Boss ran on each scroll's training data
+        self.rewarded: dict[str, set] = {}       # families of test that already gave each scroll its SURVIVED reward
         self._responses: dict[str, dict] = {}
         self._req_lock = threading.Lock()
 
@@ -107,8 +111,8 @@ class Expedition:
             while not ready():
                 if self.q._stop:
                     raise QuestStopped
-                if time.time() - start > WAIT_LIMIT:
-                    self.q._stop = True
+                if self.q.idle() or time.time() - start > WAIT_LIMIT:   # nobody is watching any more
+                    self.q.timed_out, self.q._stop = True, True
                     raise QuestStopped
                 self.cv.wait(0.25)
             self.waiting = None
@@ -123,6 +127,13 @@ class Expedition:
         if mode not in MODES:
             raise DirectorError(f"Unknown mode {mode!r}.")
         text = (req.get("text") or "").strip()
+        forced = req.get("archetype")       # a challenge chip: the Director named the registered test directly
+        if forced is not None:
+            if forced not in C.ARCHETYPES:
+                raise DirectorError(f"Unknown challenge {forced!r}.")
+            if mode not in ("CHALLENGE", "SUMMON"):
+                mode = "CHALLENGE"
+            text = text or C.ARCHETYPES[forced]["question"]
         if not text and not req.get("url") and not req.get("file"):
             raise DirectorError("Say something, add a link or attach a file.")
         q = self.q
@@ -136,6 +147,10 @@ class Expedition:
                     result={"mode": mode, "text": text[:2000], "url": req.get("url"), "filename": f.get("name"),
                             "target": a.id if a else None, "speaker": "director"})
             route = C.route(text)
+            if forced:
+                route = {**route, "archetype": forced, "forced": True}
+                if forced != "confounder":
+                    route.update(covariate=None, unmeasured=None)
             out: dict = {"mode": mode, "route": {k: v for k, v in route.items() if k != "scores"}}
             if mode == "ASK":
                 reply = self.answer(a, level, text, route)
@@ -257,6 +272,10 @@ class Expedition:
         q._emit(level=level, actor="system", action="evidence_intake",
                 line=f"Evidence {rec['id']} ({rec['source']['type']}): {rec['classification']}",
                 explain=("; ".join(rec["missing"]) or "Recorded with its provenance.")[:400], result={"intake": EV.public(rec)})
+        src = S.add_intake(q.sources, rec)
+        q._emit(level=level, actor="system", action="source_registered", line=f"The Archivist registers {src['id']}: {src['label']}"[:300],
+                explain={"NUMERIC_TEST": "A test may read its numbers.", "CONTEXT": "Kept as context: no test reads its numbers.",
+                         "EXCLUDED": "Excluded: it cannot inform this question."}[src["usage"]], result={"source": src})
         cls = rec["classification"]
         src = rec["source"]
         said = [f"I logged your evidence as {rec['id']}: {cls}."]
@@ -348,9 +367,19 @@ class Expedition:
         hp = rules.MYSTERY_HP
         return (f"{m['boss']} asks: {m['question']} The test: {m['test']}. The claim {m['rule']}. The Judge runs it on the "
                 f"training cohort only; the vaults stay closed. If the claim survives, the scroll gains {hp['SURVIVED']} HP for a "
-                f"meaningful extra test; if the boss exposes a weakness, it loses {-hp['FALLEN']} HP "
+                f"meaningful extra test, once per kind of test; if the boss exposes a weakness, it loses {-hp['FALLEN']} HP "
                 f"({-hp['FALLEN_LEAKAGE']} for future-information leakage); if no valid test can run, nothing changes "
-                "and the encounter stays unresolved.")
+                "and the encounter stays unresolved. Repeating the identical test on the unchanged scroll is not run again: "
+                "the same data gives the same answer.")
+
+    def signature(self, m: dict, a) -> str:
+        """What decides a test's answer: the test, its target and options, and the scroll as it stands. Two summons
+        with the same signature would read the same data the same way."""
+        key = {"target": a.id, "archetype": m["archetype"], "outcome": m.get("outcome") or a.st.outcome,
+               "covariate": m.get("covariate"), "unmeasured": m.get("unmeasured"),
+               "intake": m.get("intake") if m.get("secret") else None, "design": a.st.design,
+               "adjusted": a.st.adjusted, "K": a.st.K, "ablated": a.st.ablated}
+        return hashlib.sha256(json.dumps(key, sort_keys=True).encode()).hexdigest()[:16]
 
     def fight(self, m: dict, level: int, version: str = "V1") -> dict:
         """The Mystery Boss research loop. The registered test decides the outcome; the rules decide the HP."""
@@ -359,10 +388,15 @@ class Expedition:
         state = {"hp": a.hp, "credits": a.credits, "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K,
                  "outcome": a.st.outcome, "level": level}
         digest = hashlib.sha256(json.dumps(state, sort_keys=True).encode()).hexdigest()[:12]
+        m["signature"] = self.signature(m, a)
+        prior = next((x for x in self.mysteries.values() if x is not m and x.get("signature") == m["signature"]
+                      and x["status"] in ("survived", "fallen", "unresolved", "retested")), None)
         m["status"] = "summoned"
         q._emit(level=level, actor="system", action="mystery_summon", agent=a,
                 line=f"The expedition pauses. {m['boss']} rises to challenge {a.name}.",
                 explain=f"Game and research state saved (state {digest}).", result={"mystery": dict(m), "state": state})
+        if prior is not None:
+            return self._repeat(m, a, level, prior, version)
         spec = {"challenge": m["question"], "archetype": m["archetype"], "target": a.id, "claim": a.claim,
                 "outcome": m.get("outcome") or a.st.outcome, "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K,
                 "data": "training cohort only (index day < 1100)", "covariate": m.get("covariate"), "unmeasured": m.get("unmeasured"),
@@ -383,32 +417,65 @@ class Expedition:
         res = C.run(q.w, a, m["archetype"], spec)
         return self._resolve(m, a, level, res, version)
 
+    def _repeat(self, m: dict, a, level: int, prior: dict, version: str) -> dict:
+        """The identical test on the identical scroll: it is not run again, and nothing changes."""
+        q = self.q
+        line = (f"You already put this exact test to {a.name} as it stands now ({prior['id']}). The same data gives the "
+                "same answer, so there is nothing to learn and nothing to win.")
+        q._emit(level=level, actor="system", action="gatekeeper", line=f"Gatekeeper: \"{line}\"",
+                result={"speaker": "gatekeeper", "text": line, "level": level, "repeat_of": prior["id"]})
+        m.update(status="repeat", repeat_of=prior["id"], resolved_level=level, resolved_by=version, hp_delta=0,
+                 result={"outcome": "REPEAT", "line": f"Repeat of {prior['id']}: " + ((prior.get("result") or {}).get("line") or ""),
+                         "plain": "Not re-run: a deterministic test on unchanged data cannot change its answer.",
+                         "numbers": dict((prior.get("result") or {}).get("numbers") or {}),
+                         "rule": f"MYSTERY_HP[REPEAT] = {rules.MYSTERY_HP['REPEAT']:+d}"})
+        q._emit(level=level, actor="judge", action="mystery_result", agent=a, enemy=m["key"], hp_delta=0, passed=None,
+                line=f"Repeat of {prior['id']}: no new test, no HP.", explain=m["result"]["plain"],
+                payload={"numbers": m["result"]["numbers"], "formula": m["result"]["rule"], "outcome": "REPEAT",
+                         "mystery": dict(m), "mystery_id": m["id"], "version": version, "repeat_of": prior["id"]})
+        q._emit(level=level, actor="system", action="mystery_return",
+                line=(f"The hero returns to {rules.LEVELS[level]['name']}." if level in rules.LEVELS else "The hero returns."),
+                result={"mystery": dict(m)})
+        return m
+
     def _resolve(self, m: dict, a, level: int, res: dict, version: str, enemy_key: str | None = None) -> dict:
         q = self.q
         outcome = res["outcome"]
         key = "FALLEN_LEAKAGE" if outcome == "FALLEN" and res.get("leakage") else outcome
+        family = m["archetype"] or "unresolved"
+        if key == "SURVIVED" and family in self.rewarded.get(a.id, set()):
+            key = "SURVIVED_AGAIN"
         delta = max(-rules.MYSTERY_D_MAX, rules.MYSTERY_HP[key])
         before = a.hp
         a.hp = max(0, min(rules.STARTING_HP, a.hp + delta))
         applied = a.hp - before
+        if key == "SURVIVED":
+            self.rewarded.setdefault(a.id, set()).add(family)
+        if outcome in ("SURVIVED", "FALLEN"):
+            self.looks[a.id] = self.looks.get(a.id, 0) + 1
+        plain = res["plain"] + (" This kind of test already rewarded this scroll once, so it earns no more HP."
+                                if key == "SURVIVED_AGAIN" else "")
         m.update(status={"SURVIVED": "survived", "FALLEN": "fallen", "UNRESOLVED": "unresolved"}[outcome],
-                 result=_plain({k: res[k] for k in ("outcome", "line", "plain", "numbers", "rule")}), resolved_level=level,
-                 resolved_by=version, hp_delta=applied)
+                 result=_plain({**{k: res[k] for k in ("outcome", "line", "numbers", "rule")}, "plain": plain}),
+                 resolved_level=level, resolved_by=version, hp_delta=applied, looks=self.looks.get(a.id, 0))
         if outcome == "UNRESOLVED":
             m["reason"] = res["line"]
         q._enc += 1
         enc = {"encounterId": f"E{q._enc:03d}", "campaignType": q.c.id, "level": level, "enemyName": m["boss"],
                "trapType": "MYSTERY_" + (m["archetype"] or "UNRESOLVED").upper(), "scrollId": a.id, "scrollTitle": a.name,
                "heroAction": (C.ARCHETYPES.get(m["archetype"]) or {}).get("ability", "NONE"), "mysteryId": m["id"],
-               "raisedBy": m["source"], "intake": m.get("intake"),
+               "raisedBy": m["source"], "intake": m.get("intake"), "looks": self.looks.get(a.id, 0),
+               "methodId": "M-MYSTERY-SECRET" if m.get("secret") else f"M-MYSTERY-{(m['archetype'] or 'repeat').upper()}",
+               "sourceIds": ["S-TRAIN"] + ([f"S-{m['intake']}"] if m.get("intake") and f"S-{m['intake']}" in q.sources.items else []),
+               "rulesetVersion": rules.RULESET_VERSION,
                "combatResolution": {"outcome": outcome, "hpRule": f"MYSTERY_HP[{key}] = {rules.MYSTERY_HP[key]:+d}",
-                                    "clampedHpDelta": applied, "plainEnglishVerdict": res["plain"]}}
+                                    "clampedHpDelta": applied, "plainEnglishVerdict": plain}}
         m["encounter"] = enc["encounterId"]
         verdict = {"SURVIVED": "The claim survives", "FALLEN": "The boss exposes a weakness",
                    "UNRESOLVED": "Unresolved Encounter"}[outcome]
         q._emit(level=level, actor="judge", action="mystery_result", agent=a, enemy=enemy_key or m["key"], hp_delta=applied,
                 passed=None if outcome == "UNRESOLVED" else outcome == "SURVIVED",
-                line=f"{verdict}: {res['line']}"[:400], explain=res["plain"], encounter=enc,
+                line=f"{verdict}: {res['line']}"[:400], explain=plain, encounter=enc,
                 payload={"numbers": res["numbers"], "chart": res.get("chart"), "formula": res["rule"], "outcome": outcome,
                          "mystery": dict(m), "mystery_id": m["id"], "version": version})
         if a.hp <= 0 and a.active:
@@ -462,7 +529,7 @@ class Expedition:
                        {"risk_treated": r1, "risk_untreated": r0, "p_fisher": float(p_fisher)})
         sl["steps"].append({"obstacle": "Probability Phantom", "passed": bool(p_fisher < rules.ALPHA)})
         # Final boss: does the new data agree with the hero's own estimate (crude one-year risk ratio, new users, training)?
-        nu = q.w.new_user(a.st.outcome, C._train(q.w))
+        nu = q.w.new_user(a.st.outcome, C._train(q.w), TRAIN_END)
         tt, yy = nu["treated"].astype(bool), nu["y"]
         hero = _log_rr(int(yy[tt].sum()), int(tt.sum()), int(yy[~tt].sum()), int((~tt).sum()))
         new = _log_rr(e1, n1, e0, n0)

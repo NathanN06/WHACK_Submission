@@ -8,11 +8,14 @@ Each campaign is a deterministic, synthetic world with planted, known effects:
 Nothing here is real data or a real finding. The truth each world was built with is revealed in the brief.
 
 The cohort is split by calendar time: training years, the vaulted Level 4 holdout, and a second
-vault kept unexposed for a later validation run.
+vault kept unexposed for a later validation run. Analyses of the training years are point-in-time: an
+outcome counts only if it happened before the training cutoff (day 1100), and one-year risk models use only
+patients whose year of follow-up had ended by then.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -22,6 +25,7 @@ from . import rules
 DAYS = 1800                 # five years of index dates
 TRAIN_END = 1100            # index day < 1100: training years
 HOLDOUT_END = 1450          # 1100 <= index < 1450: the vaulted Level 4 holdout; later: a second, unexposed vault
+GENERATOR_VERSION = "pep-world-1"   # bump whenever the data a (campaign, seed) generates changes
 
 SITES = [("North Metro Health", False), ("River Valley Medical", False), ("Coastal Clinic Network", False),
          ("Prairie Rural Health", True), ("Mountain Rural Health", True)]
@@ -34,6 +38,7 @@ class Outcome:
     label: str
     base_rate: float        # one-year risk among comparators, before confounders
     beta: float             # true log hazard ratio once the drug has started (the planted truth)
+    short: str = ""         # a short name for generated scroll titles ("Alcohol-Relapse")
 
 
 @dataclass
@@ -72,6 +77,9 @@ class Scroll:
     origin: str = ""        # where the scroll was found
     evidence_topic: str = ""    # the real evidence topic its papers and trials come from (hypotheses.py)
     evidence_real: bool = False
+    version: int = 1            # a changed claim is a new version with a parent, never a silent edit
+    parent: str | None = None
+    champion: dict | None = None    # Challenger Mode: this scroll defends a title (champions.py)
 
 
 @dataclass
@@ -135,25 +143,44 @@ class World:
             e_post = rng.exponential(1 / (h * np.exp(beta)))
             self.events[o.key] = (e_pre, e_post)
         self.split = np.where(self.index < TRAIN_END, "train", np.where(self.index < HOLDOUT_END, "holdout", "vault2"))
+        # A commitment to every partition, made when the world is generated: the second vault's hash is public from
+        # the start, so anyone can check later that the Trial of Truth scored exactly these patients.
+        self.fingerprints = {k: self._fingerprint(self.split == k) for k in ("train", "holdout", "vault2")}
+
+    def _fingerprint(self, rows: np.ndarray) -> str:
+        h = hashlib.sha256(f"{GENERATOR_VERSION}|{self.c.id}|{self.seed}".encode())
+        for arr in [self.index, self.site, self.start, *(self.X[k] for k in COVARIATES),
+                    *(e for o in self.c.outcomes for e in self.events[o.key])]:
+            h.update(np.ascontiguousarray(np.asarray(arr, dtype=float)[rows]).tobytes())
+        return h.hexdigest()
 
     # ---------- designs ----------
 
-    def rows(self, outcome: str, design: str, mask: np.ndarray) -> dict:
+    def rows(self, outcome: str, design: str, mask: np.ndarray, cutoff: int | None = TRAIN_END) -> dict:
         """Person-time rows for a Poisson model over the year after the index date.
 
         "ever": anyone who fills the peptide before their first event counts as exposed from day 0,
         so the waiting time before the fill (when they could not yet have been treated) is credited to the drug.
         "new_user": person-time is split at the first fill; before it the patient is unexposed.
+
+        Point in time: follow-up is censored at `cutoff` (the training cutoff by default), so no event that happened
+        after it is counted. Every caller analyses the training years; a row indexed after the cutoff is refused.
         """
         e_pre, e_post = self.events[outcome]
-        S, T = self.start[mask], rules.FOLLOW_UP
-        first = np.where(e_pre[mask] < S, e_pre[mask], S + e_post[mask])
-        event = first < T
-        end = np.minimum(first, T)
         idx = np.nonzero(mask)[0]
+        S, T = self.start[mask], float(rules.FOLLOW_UP)
+        horizon = np.full(len(idx), T)
+        if cutoff is not None:
+            if np.any(self.index[idx] >= cutoff):
+                raise ValueError("rows() was asked for patients indexed after its cutoff")
+            horizon = np.minimum(T, cutoff - self.index[idx]).astype(float)
+        first = np.where(e_pre[mask] < S, e_pre[mask], S + e_post[mask])
+        event = first < horizon
+        end = np.minimum(first, horizon)
+        day0 = self.index[idx].astype(float)
         if design == "ever":
             exposed = (S < end).astype(float)
-            return {"i": idx, "exposed": exposed, "pt": end, "event": event.astype(float)}
+            return {"i": idx, "exposed": exposed, "pt": end, "event": event.astype(float), "end_day": day0 + end}
         started = S < end
         pre_pt = np.where(started, S, end)
         post_pt = np.where(started, end - S, 0.0)
@@ -162,18 +189,29 @@ class World:
         keep = started
         return {"i": np.concatenate([idx, idx[keep]]), "exposed": np.concatenate([np.zeros(len(idx)), np.ones(keep.sum())]),
                 "pt": np.concatenate([pre_pt, post_pt[keep]]),
-                "event": np.concatenate([pre_event, post_event[keep]]).astype(float)}
+                "event": np.concatenate([pre_event, post_event[keep]]).astype(float),
+                "end_day": np.concatenate([day0 + pre_pt, (day0 + end)[keep]])}
 
-    def new_user(self, outcome: str, mask: np.ndarray) -> dict:
-        """The active-comparator new-user cohort: initiators followed from their first fill, comparators from the index date."""
+    def new_user(self, outcome: str, mask: np.ndarray, cutoff: int | None = None) -> dict:
+        """The active-comparator new-user cohort: initiators followed from their first fill, comparators from the index date.
+
+        With a cutoff (fitting on the training years), only patients whose year of follow-up had ended by the cutoff
+        are used, so a one-year outcome is never read before it could have been observed.
+        """
         e_pre, e_post = self.events[outcome]
         T = rules.FOLLOW_UP
         init = mask & (self.start < 180)
         comp = mask & ~self.peptide
+        end_init = self.index + np.where(np.isfinite(self.start), self.start, 0) + T
+        end_comp = self.index + T
+        if cutoff is not None:
+            init = init & (end_init <= cutoff)
+            comp = comp & (end_comp <= cutoff)
         i = np.concatenate([np.nonzero(init)[0], np.nonzero(comp)[0]])
         treated = np.concatenate([np.ones(init.sum()), np.zeros(comp.sum())])
         y = np.concatenate([e_post[init] < T, e_pre[comp] < T]).astype(float)
-        return {"i": i, "treated": treated, "y": y}
+        return {"i": i, "treated": treated, "y": y,
+                "end_day": np.concatenate([end_init[init], end_comp[comp]]).astype(float)}
 
     def covariates(self, i: np.ndarray, sites: bool = True) -> np.ndarray:
         cols = [self.X[k][i] for k in COVARIATES]

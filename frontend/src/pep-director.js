@@ -40,7 +40,7 @@ function openChat() {
   $("chat-note").textContent = liveConsole() ? "The expedition is paused. The hero answers from the Judge's ledger; it never invents a number."
     : "This is a recorded run, so the hero cannot be challenged here. Start the server and choose Begin to talk to the hero live.";
   $("chat-send").disabled = !liveConsole();
-  renderChat();
+  renderChat(); renderChips();
   $("chat-dlg").showModal();
   $("chat-text").focus();
 }
@@ -124,6 +124,50 @@ function paintMiniBosses() {
   }
 }
 
+// ---------- the seven boss chips: each one summons one registered test ----------
+
+const FOUGHT = ["survived", "fallen", "repeat"];
+
+function renderChips() {
+  const s = G.state, ch = s.rules && s.rules.challenges, box = $("chat-chips");
+  if (!ch) { box.hidden = true; return; }
+  box.hidden = false;
+  const target = $("chat-target").value, live = liveConsole() && !!target;
+  $("chips").innerHTML = Object.entries(ch).map(([k, c]) => {
+    // the latest fight of this test on the selected scroll: the same test on an unchanged scroll is not run again
+    const last = Object.values(s.mysteries).filter((m) => m.target === target && m.archetype === k && FOUGHT.includes(m.status)).pop();
+    return `<button type="button" class="chip ${last ? `was-${last.status}` : ""}" data-chip="${esc(k)}" ${live && !DR.busy ? "" : "disabled"}
+      title="${esc(c.question)} Test: ${esc(c.test)}. The claim ${esc(c.rule)}.${last ? ` Last fought as ${last.id}: ${last.status}.` : ""}">
+      <canvas class="pixel boss-mini" data-boss="${esc(c.key)}" width="48" height="40" aria-hidden="true"></canvas>
+      <span>${esc(c.boss.replace(/^The /, ""))}</span>${last ? `<em>${esc(last.status)}</em>` : ""}</button>`;
+  }).join("");
+  for (const b of document.querySelectorAll("#chips [data-chip]")) b.onclick = () => summonChip(b.dataset.chip);
+}
+
+// One click, one fight: the Director names the test, the Gatekeeper registers it, the boss is summoned at once.
+async function summonChip(key) {
+  const target = $("chat-target").value;
+  if (DR.busy || !liveConsole() || !target) return;
+  DR.busy = true;
+  renderChips();
+  $("chat-note").textContent = "The Gatekeeper registers the test…";
+  let offered = null;
+  try {
+    const out = await directorPost("chat", { mode: "SUMMON", archetype: key, text: "", target,
+                                             level: Math.min(4, G.state.level || 1), request_id: newRequestId() });
+    for (const e of out.events) apply(e, true);
+    renderAll(); renderChat();
+    offered = out.mystery && out.mystery.status === "offered" ? out.mystery.id : null;
+    $("chat-note").textContent = "";
+  } catch (err) {
+    $("chat-note").textContent = `The challenge did not reach the hero: ${String(err.message || err).slice(0, 200)}`;
+  } finally {
+    DR.busy = false;
+  }
+  if (offered) await mysteryAction(offered, "summon");
+  if ($("chat-dlg").open) renderChips();
+}
+
 // ---------- sending ----------
 
 function readFile(file) {
@@ -198,11 +242,12 @@ function directorEvent(e) {
   }
   if (e.action === "secret_level_complete") $("secret-badge").hidden = true;
   if (e.action === "mystery_result" && r.outcome && r.outcome !== "MEASURED") {
-    banner({ SURVIVED: "The claim survives", FALLEN: "A weakness exposed", UNRESOLVED: "Unresolved Encounter" }[r.outcome] || r.outcome,
+    banner({ SURVIVED: "The claim survives", FALLEN: "A weakness exposed", UNRESOLVED: "Unresolved Encounter",
+             REPEAT: "Already tested: nothing to win" }[r.outcome] || r.outcome,
            (r.mystery && r.mystery.boss) || "");
   }
   if (e.action === "level_start" || e.action === "bridge_enter") $("challenge").hidden = e.action === "bridge_enter";
-  if ($("chat-dlg").open) renderChat();
+  if ($("chat-dlg").open) { renderChat(); renderChips(); }
 }
 
 function wireDirector() {
@@ -210,7 +255,7 @@ function wireDirector() {
   $("chat-close").onclick = closeChat;
   $("chat-dlg").addEventListener("close", onChatClosed);
   $("chat-form").onsubmit = sendChat;
-  $("chat-target").onchange = showHypothesis;
+  $("chat-target").onchange = () => { showHypothesis(); renderChips(); };
   $("chat-text").addEventListener("keydown", (ev) => { if (ev.key === "Enter" && !ev.shiftKey) { ev.preventDefault(); $("chat-form").requestSubmit(); } });
   for (const b of document.querySelectorAll(".mode")) {
     b.onclick = () => {

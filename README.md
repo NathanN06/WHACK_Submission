@@ -89,11 +89,13 @@ Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.
 
 ## Getting started: the Hypothesis Gauntlet (Peptide & GLP-1 Discovery)
 
-The Alchemist-Epidemiologist carries three hypothesis scrolls about peptides and GLP-1 drugs through four
+The Alchemist-Epidemiologist carries hypothesis scrolls (2 to 6 formed by the Scribe on the title screen; the
+recorded demos and the command line use three hand-written ones) about peptides and GLP-1 drugs through four
 levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of Truth). A
 deterministic Statistical Judge measures every claim; the hero only chooses abilities. Each scroll has its
 own HP and shatters at 0. Only a scroll that predicts unseen, matched patients better than the Gatekeeper
-Skeptic's active-comparator baseline, by a margin unlikely to be luck, wins.
+Skeptic's active-comparator baseline, by a margin unlikely to be luck, wins. Separately, each question gets a
+scientific status (SUPPORTED, REFUTED or INCONCLUSIVE) from the drug's matched risk ratio and its 95% interval.
 Rules, formulas and HP weights: [docs/gauntlet-rules.md](docs/gauntlet-rules.md).
 
 **The four campaigns are simulated** worlds with planted, known effects (revealed in the brief). They are
@@ -104,16 +106,19 @@ not real findings and not medical advice.
 ```
 
 - Pick a campaign (A to D). **Begin** runs it live; with `ANTHROPIC_API_KEY` in `.env` you can let Claude
-  play the Alchemist, otherwise each scroll follows its scripted plan.
+  play the Alchemist, otherwise each scroll follows its scripted plan. **Challenger round** plays one round of
+  the campaign's title on a fresh cohort: the champion (kept in `data/champions.json`) must win again.
 - **Watch the recorded run** plays `frontend/src/demo/demo-<letter>.jsonl` and needs no server:
   `cd frontend/src && python3 -m http.server`, then open `index.html#watch=A`.
 - Command line: `.venv/bin/python scripts/run_pep.py A` (or `all --out frontend/src/demo` to re-record the demos).
-- Split screen: battle stage (the hero, three floating scrolls, the Gatekeeper and its speech bubbles, a
+- Split screen: battle stage (the hero, the floating scrolls, the Gatekeeper and its speech bubbles, a
   HUD for the scroll under test), combat console (Run/Pause, 1×/2×/4×, Step, Skip level, Exit) and, on the
   right, the Test Inspector (test, chart, formula, the HP clamp, the telemetry record) above a filterable
   append-only ledger.
 - After level IV the laboratory shows the Research Decision Brief: decision, evidence with encounter
-  citations, what misled the other scrolls, uncertainty, the composite score with the Gatekeeper's
-  benchmark row, HP per level, damage by trap, and the planted truth.
+  citations, the scientific status of each question, what misled the other scrolls, uncertainty, the
+  composite score grouped by question with the Gatekeeper's benchmark row, HP per level, damage by trap, and
+  the planted truth. The **Archivist's Ledger** tab lists every source and the method behind every encounter,
+  and downloads the run's manifest.
 
 Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

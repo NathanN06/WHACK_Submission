@@ -20,7 +20,7 @@ from scipy import stats
 
 from . import judge as J
 from . import rules
-from .world import COVARIATE_LABELS, COVARIATES, SITES, World
+from .world import COVARIATE_LABELS, COVARIATES, SITES, TRAIN_END, World
 
 ARCHETYPES = {
     "seasonal": {"boss": "The Seasonal Wraith", "key": "m_seasonal",
@@ -181,16 +181,18 @@ def test_chronolock(w: World, a, spec: dict) -> dict:
     purged_st = _Copy(st, design="new_user")
     purged = _fit(w, purged_st, train)
     leak = st.design == "ever" and share > 0.01
-    # the structural audit: every training row's index date is before the holdout begins
-    structural = bool(np.all(w.index[train] < w.index[w.mask("holdout")].min())) if w.mask("holdout").any() else True
+    # the structural audit: every training row starts before the cutoff and no follow-up it reads runs past it
+    last_day = float(w.rows(st.outcome, st.design, train)["end_day"].max())
+    structural = bool(np.all(w.index[train] < TRAIN_END)) and last_day <= TRAIN_END
     ok = not leak and structural
     return _out(ok, (f"{share * 100:.0f}% of the 'treated' person-time came before the first fill; rate ratio {cur['rr']:.2f} "
                      f"as carried vs {purged['rr']:.2f} time-zero aligned." if leak else
-                     f"Exposure starts at the first fill (no immortal time); rate ratio {cur['rr']:.2f}. Training rows all precede the holdout."),
+                     f"Exposure starts at the first fill (no immortal time); rate ratio {cur['rr']:.2f}. Every training row "
+                     f"starts and ends by day {TRAIN_END} (the last follow-up day read is {last_day:.0f})."),
                 ("The scroll credits the drug with time before anyone took it: information from the future." if leak else
                  "No future information found in the design or the split."),
                 {"immortal_share": share, "rr_as_carried": cur["rr"], "rr_time_zero": purged["rr"],
-                 "split_respects_time": structural},
+                 "split_respects_time": structural, "last_follow_up_day": last_day},
                 ARCHETYPES["chronolock"]["rule"],
                 {"kind": "forest", "title": "Rate ratio as carried vs time-zero aligned", "ref": 1.0,
                  "rows": [{"label": "As carried", **_ci(cur)}, {"label": "Time-zero aligned", **_ci(purged)}]},
@@ -231,7 +233,7 @@ def test_regional(w: World, a, spec: dict) -> dict:
 def test_chance(w: World, a, spec: dict) -> dict:
     st, d = a.st, w.c.effect_direction
     outcome = spec.get("outcome") or st.outcome
-    nu = w.new_user(outcome, _train(w))
+    nu = w.new_user(outcome, _train(w), TRAIN_END)
     t, y = nu["treated"].astype(bool), nu["y"]
     if t.sum() < 10 or (~t).sum() < 10:
         return unresolved("Too few new users or comparators in the training cohort to shuffle.")

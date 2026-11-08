@@ -17,10 +17,12 @@ from .arena.agents import RosterLanista, default_roster, llm_available, make_age
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
+from .pep import champions
+from .pep import challenges as pep_challenges
 from .pep import rules as pep_rules
 from .pep.agents import make_hero
 from .pep.campaign import PepQuest
-from .pep.hypotheses import DB_PATH as EVIDENCE_DB, MAX_SCROLLS
+from .pep.hypotheses import DB_PATH as EVIDENCE_DB, MAX_SCROLLS, MIN_SCROLLS
 from .pep.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS, HERO
 from .pep.director import DirectorError, Expedition
 from .pep.models import QuestEvent
@@ -28,6 +30,7 @@ from .pep.models import QuestEvent
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "runs"
 QUESTS = ROOT / "data" / "quests"
+CHAMPIONS = ROOT / "data" / "champions.json"
 DB = ROOT / "data" / "whack.duckdb"
 
 app = FastAPI(title="Hypothesis Gauntlet")
@@ -82,7 +85,8 @@ def _replay(ledger: Ledger, source: Path, pace: float) -> None:
         time.sleep(pace)
 
 
-@app.post("/api/runs")
+# The original arena (blood-sugar edition) endpoints are kept for its tests but hidden from the API docs.
+@app.post("/api/runs", include_in_schema=False)
 def start_run(req: RunRequest):
     run_id = _new_id("r")
     if req.replay:
@@ -115,7 +119,7 @@ def _catalog(train) -> list[dict]:
     return public_catalog(default_registry(), 3, set(train.columns))
 
 
-@app.get("/api/roster")
+@app.get("/api/roster", include_in_schema=False)
 def roster():
     """Every feature, and the pre-filled hypotheses the roster editor starts from."""
     train, _, _ = frames()
@@ -124,12 +128,12 @@ def roster():
     return {"features": catalog, "hypotheses": hypotheses, "max_in": len(hypotheses)}
 
 
-@app.get("/api/runs")
+@app.get("/api/runs", include_in_schema=False)
 def list_runs():
     return sorted((p.stem for p in Path(RUNS).glob("*.jsonl")), reverse=True)
 
 
-@app.get("/api/runs/{run_id}/events")
+@app.get("/api/runs/{run_id}/events", include_in_schema=False)
 def run_events(run_id: str, after: int = 0):
     run = _runs.get(run_id)
     if run is not None:
@@ -143,7 +147,7 @@ def run_events(run_id: str, after: int = 0):
     return {"events": [e.model_dump() for e in events], "done": done}
 
 
-@app.post("/api/theory")
+@app.post("/api/theory", include_in_schema=False)
 def test_theory(req: TheoryRequest):
     train, test, sensors = frames()
     lanista, sceptic = make_agents(_use_llm(req.llm))
@@ -157,14 +161,19 @@ def test_theory(req: TheoryRequest):
 # ---------- Hypothesis Gauntlet: Peptide & GLP-1 Edition ----------
 
 
+MAX_LIVE = 4          # live expeditions at once; a fifth is refused (429) until one ends
+IDLE_LIMIT = 120      # seconds without a poll or a Director action before an expedition stops itself
+
+
 class QuestRequest(BaseModel):
     campaign: str = Field("A", max_length=40)  # A-D or a campaign id
     llm: bool | None = None  # None = Claude plays the Alchemist if an API key is set
     replay: str | None = None
     pace: float = Field(0.0, ge=0, le=5)
-    seed: int = 0
+    seed: int = Field(0, ge=0, le=1_000_000)
     interactive: bool = False  # True: the quest waits for the screen and the Research Director's console is open
-    scrolls: int | None = Field(None, ge=1, le=MAX_SCROLLS)  # None: the three hand-written scrolls; else the Scribe forms this many
+    scrolls: int | None = Field(None, ge=MIN_SCROLLS, le=MAX_SCROLLS)  # None: the hand-written scrolls; else the Scribe forms this many
+    challenger: bool = False  # True: one round of the campaign's title track (champions.py), on a fresh seed
 
 
 def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
@@ -192,6 +201,9 @@ def start_quest(req: QuestRequest):
         quest = None
     else:
         cid = _campaign_id(req.campaign)
+        live = sum(1 for e in _quests.values() if e.get("quest") is not None and e["thread"].is_alive())
+        if live >= MAX_LIVE:
+            raise HTTPException(429, f"{live} expeditions are already running; wait for one to end or leave it first.")
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
         use_llm = _use_llm(req.llm)
         scribe = None
@@ -202,7 +214,8 @@ def start_quest(req: QuestRequest):
             load_env_key(ENV_FILE)
             scribe = anthropic_complete()
         quest = PepQuest(quest_id, cid, ledger, make_hero(use_llm), seed=req.seed, pace=req.pace,
-                         n_scrolls=req.scrolls, scribe=scribe)
+                         n_scrolls=req.scrolls, scribe=scribe, challenger=req.challenger, champions_path=CHAMPIONS)
+        quest.idle_limit = IDLE_LIMIT
         if req.interactive:
             Expedition(quest)
         thread = threading.Thread(target=quest.run, daemon=True)
@@ -232,6 +245,8 @@ def list_quests():
 def quest_events(quest_id: str, after: int = 0):
     quest = _quests.get(quest_id)
     if quest is not None:
+        if quest.get("quest") is not None:
+            quest["quest"].touch()   # someone is still watching
         done = not quest["thread"].is_alive()
         events = quest["ledger"].since(after)
     else:
@@ -253,6 +268,8 @@ class Upload(BaseModel):
 class ChatRequest(BaseModel):
     mode: Literal["ASK", "CHALLENGE", "ADD_EVIDENCE", "NEW_HYPOTHESIS", "SUMMON"] = "ASK"
     text: str = Field("", max_length=2000)
+    # a challenge chip: the registered test the Director picked, instead of routing the text
+    archetype: Literal["seasonal", "chronolock", "regional", "chance", "replication", "redundancy", "confounder"] | None = None
     url: str | None = Field(None, max_length=500)
     file: Upload | None = None
     level: int | None = Field(None, ge=1, le=5)
@@ -282,6 +299,7 @@ def _director(quest_id: str) -> Expedition:
         raise HTTPException(409, "This quest has no Research Director's console (it is a recording or was started without one).")
     if not entry["thread"].is_alive():
         raise HTTPException(409, "This expedition has ended.")
+    quest.touch()
     return quest.director
 
 
@@ -331,7 +349,14 @@ def campaigns():
     """The four peptide campaigns the title screen offers."""
     return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
              "comparator": c.comparator, "target": c.outcomes[0].label, "scrolls": [s.title for s in c.scrolls],
-             "simulated": True, "max_scrolls": MAX_SCROLLS, "real_evidence": EVIDENCE_DB.exists()} for c in CAMPAIGNS.values()]
+             "simulated": True, "min_scrolls": MIN_SCROLLS, "max_scrolls": MAX_SCROLLS,
+             "real_evidence": EVIDENCE_DB.exists(), "track": champions.track_key(c)} for c in CAMPAIGNS.values()]
+
+
+@app.get("/api/champions")
+def champion_registry():
+    """Challenger Mode: each campaign's title track, its reigning champion and its last rounds."""
+    return champions.public(CHAMPIONS)
 
 
 @app.get("/api/quests-rules")
@@ -341,7 +366,10 @@ def quest_rulebook():
     return {"levels": R.LEVELS, "abilities": R.ABILITIES, "enemies": R.ENEMIES, "d_max": R.D_MAX,
             "score_weights": R.SCORE_WEIGHTS, "score_rules": R.SCORE_RULES, "verdicts": R.VERDICTS,
             "traps": R.TRAPS, "trap_labels": R.TRAP_LABELS, "archetypes": ARCHETYPES, "hero": HERO,
-            "starting_hp": R.STARTING_HP, "starting_credits": R.STARTING_CREDITS}
+            "starting_hp": R.STARTING_HP, "starting_credits": R.STARTING_CREDITS, "ruleset_version": R.RULESET_VERSION,
+            "mystery_hp": R.MYSTERY_HP, "science": R.SCIENCE,
+            "challenges": {k: {f: v[f] for f in ("boss", "key", "question", "test", "ability", "rule")}
+                           for k, v in pep_challenges.ARCHETYPES.items()}}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend" / "src", html=True), name="ui")

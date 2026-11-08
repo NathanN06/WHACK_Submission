@@ -195,7 +195,9 @@ def start_quest(req: QuestRequest):
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
         use_llm = _use_llm(req.llm)
         scribe = None
-        if use_llm and req.scrolls is not None:
+        # The Scribe writes with Claude whenever a key is set, even if the scripted hero plays: otherwise the
+        # script hands back the campaign's hand-written scrolls and every quest reads the same.
+        if req.scrolls is not None and (use_llm or llm_available()):
             from .arena.agents import ENV_FILE, anthropic_complete, load_env_key
             load_env_key(ENV_FILE)
             scribe = anthropic_complete()

@@ -53,7 +53,7 @@ that scroll's credits (anything invalid falls back to the script).
 | I Rumour Dungeon | Slime (posts per platform), Echo-Chamber Wisp (reposts), **Affiliate Siren**, **Anecdote Bat** | `15 × φ_affiliate + 15 × max(0, 1 − N_eff / 30)`; φ = sponsored posts / supporting posts, N_eff = independent stories |
 | II Forgotten Archives | Preprint Mimic (naive rate ratio), Citation Spider (confounder balance), **Rodent-Model Chimera**, **Healthy-User Phantom** | `22 × τ_rodent + 20 × min(1, \|β_naive − β_adj\| / \|β_naive\|)`; Poisson rate ratios with a person-time offset, adjusted for age, sex, severity, healthy-user score, testosterone, therapy and site |
 | III Temple of Replication | **Publication Bias Knight** (Šidák `1 − (1 − p_raw)^K`), **Citation Island Sentinel** (H_lab), Contradiction Wraith (per-site effects), **The Data Chimera** | `20 × I(p_corr > .05) + 20 × H_lab + 25 × I(N_RCT = 0)`; H_lab = sum of squared lab shares |
-| IV Citadel of Truth | Bureaucratic Titan (immortal-time audit), **Chronolock Guardian**, **Guardian of False Discoveries** | Chronolock: `35 × L_time + 25 × Δ_purge`. Guardian: SS_oos = 1 − Loss_scroll / Loss_benchmark (Brier) on 1:1 propensity-matched new users in the vault, paired one-sided loss test. Gain (SS > 0.002, p < .05): 0 and Eureka. Loss (SS < −0.002): `min(50, 25 + 25 × \|SS\| / 0.02)`. Otherwise 15 |
+| IV Citadel of Truth | Bureaucratic Titan (immortal-time audit), **Chronolock Guardian**, **Guardian of False Discoveries** | Chronolock: `35 × L_time + 25 × Δ_purge`. Guardian: SS_oos = 1 − Loss_scroll / Loss_benchmark (Brier) on 1:1 propensity-matched new users in the vault, paired one-sided loss test. Gain (SS > 0.002, p < .05) on a new-user, time-zero design: 0 and Eureka; the same gain with immortal time still in the design is not trusted (15). Loss (SS < −0.002): `min(50, 25 + 25 × \|SS\| / 0.02)`. Otherwise 15 |
 
 ## Abilities
 
@@ -70,7 +70,7 @@ that scroll's credits (anything invalid falls back to the script).
 
 ## Verdicts, score and the brief
 
-- **VALIDATED**: SS_oos > 0.002 and paired p < 0.05. **NOT BETTER**: survived without that.
+- **VALIDATED**: SS_oos > 0.002 and paired p < 0.05, on a new-user, time-zero design. **NOT BETTER**: survived without that.
   **SHATTERED**: 0 HP. **BASELINE**: the Gatekeeper's benchmark.
 - Composite score = 0.35 × Norm(SS) + 0.25 × HP + 0.25 × % traps falsified + 0.15 × efficiency,
   Norm = 100 × clamp(SS / 0.02, 0, 1), efficiency = min(100, 100 × lift % / max(1, credits spent / 10)).

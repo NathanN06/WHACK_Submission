@@ -142,17 +142,46 @@ def decision_brief(q, champion, rows) -> dict:
             decision = "PRIORITISE A CONFIRMATORY RANDOMISED TRIAL"
             rec = (f"Prioritise a randomised trial of {_lower(c.drug)} against {_comp(c)} for "
                    f"{_lower(o.label)}. The observational signal survived every trap, but it is still observational.")
+        dmg = champion.damage
+
+        def hit(key):
+            n = dmg.get(key, 0)
+            return f" It lost {n} HP here." if n else ""
+
+        caveats = []
+        if st.design == "new_user":
+            design = f"New-user, time-zero design: rate ratio {m4['rr_current']:.2f} with no immortal time."
+        else:
+            caveats.append("immortal time")
+            design = (f"Not time-zero aligned: exposure was counted for anyone who ever filled a prescription "
+                      f"({m4['immortal_share']:.0%} immortal time). Rate ratio {m4['rr_current']:.2f} as carried, "
+                      f"{m4['rr_purged']:.2f} with a new-user design.")
+        if st.adjusted:
+            confound = (f"Adjusted for measured confounders: rate ratio {m2['naive']['rr']:.2f} naive, "
+                        f"{m2['adjusted']['rr']:.2f} adjusted.")
+        else:
+            caveats.append("confounding")
+            confound = (f"Not adjusted for measured confounders: rate ratio {m2['naive']['rr']:.2f} as carried; "
+                        f"adjusting would give {m2['adjusted']['rr']:.2f}.")
+        if m3["p_corr"] < rules.ALPHA:
+            search = f"Survives its search: K = {m3['K']}, p_raw = {m3['p_raw']:.2g}, Sidak p_corr = {m3['p_corr']:.2g}."
+        else:
+            caveats.append("multiple testing")
+            search = (f"Does not survive its search: K = {m3['K']}, p_raw = {m3['p_raw']:.2g}, Sidak p_corr = "
+                      f"{m3['p_corr']:.2g} (needs < {rules.ALPHA}).")
+        if caveats:
+            rec += (" Caveats: it did not guard against " + ", ".join(caveats)
+                    + ", so confirm those before acting.")
+            rec = rec.replace("The observational signal survived every trap, but it is still observational.",
+                              "It won at the Guardian, but not every trap was cleared, and it is still observational.")
         evidence = [
             _ev(f"Predicted {m4['matched_pairs']} matched pairs of unseen holdout patients better than the comparator: "
                 f"SS = {m4['ss_oos']:+.4f}, paired loss test p = {m4['p_dm']:.3g}.", champion.encounters.get("final")),
-            _ev(f"New-user, time-zero design: rate ratio {m4['rr_current']:.2f} with no immortal time.",
-                champion.encounters.get("chrono")),
-            _ev(f"Adjusted for measured confounders: rate ratio {m2['naive']['rr']:.2f} naive, {m2['adjusted']['rr']:.2f} adjusted.",
-                champion.encounters.get("confound")),
-            _ev(f"Survives its search: K = {m3['K']}, p_raw = {m3['p_raw']:.2g}, Sidak p_corr = {m3['p_corr']:.2g}.",
-                champion.encounters.get("sidak")),
+            _ev(design + hit("chrono"), champion.encounters.get("chrono")),
+            _ev(confound + hit("confound"), champion.encounters.get("confound")),
+            _ev(search + hit("sidak"), champion.encounters.get("sidak")),
             _ev(f"Replicated in {len(m3['replicating'])} of {len(m3['sites'])} EHR sites; lab concentration "
-                f"H = {m3['h_lab']:.2f}.", champion.encounters.get("hlab")),
+                f"H = {m3['h_lab']:.2f}." + hit("hlab"), champion.encounters.get("hlab")),
         ]
         uncertainty = (f"The rate ratio used was {rr:.2f}, from one simulated network. Unmeasured confounding cannot be "
                        f"ruled out, and {'no' if m3['n_rct'] == 0 else m3['n_rct']} completed human RCT"

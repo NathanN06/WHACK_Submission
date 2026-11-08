@@ -152,3 +152,10 @@ def test_leaving_stops_a_live_quest(quest_client):
     assert events[-1]["action"] == "stopped"
     assert not any(e["action"] == "finale" for e in events)
     assert quest_client.post("/api/quests/nope/stop").status_code == 404
+
+
+def test_run_paths_stay_in_the_runs_folder_and_pace_is_bounded(client, tmp_path):
+    (tmp_path.parent / "secret.jsonl").write_text("")
+    assert client.get("/api/runs/..%2Fsecret/events").status_code == 404
+    assert client.post("/api/runs", json={"pace": -1}).status_code == 422
+    assert client.post("/api/runs", json={"pace": 1e9}).status_code == 422

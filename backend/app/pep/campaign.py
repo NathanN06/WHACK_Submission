@@ -96,8 +96,13 @@ class PepQuest:
             self.ledger.write(level=self.level, actor="system", action="stopped",
                               line="The Research Director left the gauntlet, so the expedition was stopped.")
             return None
-        except Exception as e:  # never end silently: say what broke
-            self._emit(actor="system", action="error", line=f"The expedition was halted: {e!r}"[:300])
+        except Exception as e:  # never end silently: say what broke (or that the player left meanwhile)
+            if self._stop:
+                self.ledger.write(level=self.level, actor="system", action="stopped",
+                                  line="The Research Director left the gauntlet, so the expedition was stopped.")
+            else:
+                self.ledger.write(level=self.level, actor="system", action="error",
+                                  line=f"The expedition was halted: {e!r}"[:300])
             return None
 
     def stop(self) -> None:
@@ -171,7 +176,8 @@ class PepQuest:
         a.credits -= cost
         a.spent += cost
         a.cast[level] = picks
-        notes = [self.apply_ability(a, k) for k in picks]
+        # Ablation Strike measures the scroll as it stands, so apply it after every ability that changes it.
+        notes = [self.apply_ability(a, k) for k in sorted(picks, key=lambda k: k == "ABLATION_STRIKE")]
         self._emit(actor="agent", action="decision", agent=a, cost=cost, line=d.line,
                    explain=" ".join(n for n in notes if n) or "No abilities cast for this scroll this level.",
                    payload={"abilities": picks, "source": d.source, "menu": list(menu),
@@ -340,7 +346,8 @@ class PepQuest:
                                  + (" The guard counts only the human studies." if guarded else
                                     " The guard found no human study to stand on." if st.species_guard else ""),
                         "text": f"22 x tau = 22 x {m['tau']:.3f}" + (f" x {rules.SPECIES_GUARD_M}" if guarded else "") + f" = {raw:.2f}",
-                        "latex": f"22\\tau_{{rodent}} = 22 \\times {m['tau']:.3f} = {22 * m['tau']:.2f}",
+                        "latex": f"22\\tau_{{rodent}} = 22 \\times {m['tau']:.3f}"
+                                 + (f" \\times {rules.SPECIES_GUARD_M}" if guarded else "") + f" = {raw:.2f}",
                         "numbers": {"tau_rodent": m["tau"], "human": m["human"], "rodent": m["rodent"], "in_vitro": m["in_vitro"]},
                         "chart": {"kind": "stack", "title": "Supporting papers by species",
                                   "rows": [{"label": "Papers", "parts": [{"name": "human", "value": m["human"]},
@@ -427,14 +434,26 @@ class PepQuest:
                                   "rows": [{"label": "As carried", "est": round(m["rr_current"], 4)},
                                            {"label": "Immortal time purged", "est": round(m["rr_purged"], 4)}]}}
             if key == "guardian":
-                raw, eureka = J.d_final(m)
+                time_zero = st.design == "new_user"
+                raw, eureka = J.d_final(m, time_zero)
                 a.eureka = eureka
+                untrusted_gain = not time_zero and m["ss_oos"] > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA
                 ob, pr = m["observed"], m["predicted"]
+                if m.get("no_overlap"):
+                    return {"raw": raw, "heal": 0, "eureka": False,
+                            "line": f"Only {m['matched_pairs']} matched holdout pair(s): no overlap between users and comparators, so no skill can be shown.",
+                            "plain": "Peptide users and comparators in the holdout are too different to compare like with like.",
+                            "text": f"matched pairs = {m['matched_pairs']} < 2; D_final = {raw:.1f}",
+                            "latex": f"n_{{pairs}} = {m['matched_pairs']}",
+                            "numbers": {"matched_pairs": m["matched_pairs"], "rr_used": math.exp(m["beta_used"])}}
                 return {"raw": raw, "heal": rules.EUREKA_HEAL if eureka else 0, "eureka": eureka,
                         "line": f"SS_oos = {m['ss_oos']:+.4f} on {m['matched_pairs']} matched holdout pairs; paired p = {m['p_dm']:.3g}"
-                                + (". Eureka! +10 HP" if eureka else "."),
+                                + (". Eureka! +10 HP" if eureka else
+                                   ", but on a design with immortal time, so the gain is not trusted." if untrusted_gain else "."),
                         "plain": (f"Using this scroll's effect predicted unseen patients {m['ss_oos'] * 100:.1f}% better than the comparator, "
                                   "and that is unlikely to be luck." if eureka else
+                                  "It beat the comparator, but its effect was measured with immortal time, which inflates it; "
+                                  "only a time-zero (new-user) design can earn a Eureka." if untrusted_gain else
                                   "It predicted unseen patients no better than the comparator." if m["ss_oos"] >= -rules.SS_MARGIN else
                                   f"Its effect made predictions {abs(m['ss_oos']) * 100:.1f}% worse than assuming no drug effect at all."),
                         "text": f"SS = 1 - {m['loss_scroll']:.5f} / {m['loss_comparator']:.5f} = {m['ss_oos']:.4f}; paired p = {m['p_dm']:.3g}; D_final = {raw:.1f}",

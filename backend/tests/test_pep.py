@@ -41,6 +41,7 @@ def test_sidak_and_the_final_rule():
     assert J.d_final({"ss_oos": 0.01, "p_dm": 0.01}) == (0.0, True)
     assert J.d_final({"ss_oos": 0.01, "p_dm": 0.3}) == (15.0, False)  # a gain that could be luck is no gain
     assert J.d_final({"ss_oos": -0.04, "p_dm": 0.9}) == (50.0, False)
+    assert J.d_final({"ss_oos": 0.01, "p_dm": 0.01}, time_zero=False) == (15.0, False)  # immortal time: not trusted
 
 
 def test_poisson_fit_recovers_a_rate_ratio():
@@ -102,8 +103,9 @@ def test_the_real_effect_is_validated_and_the_hype_shatters(tmp_path):
     champ = result["champion"]
     assert champ and champ["archetype"] == "PIONEER" and champ["verdict"] == "VALIDATED"
     assert champ["skill"]["ss_oos"] > rules.SS_MARGIN and champ["skill"]["p_dm"] < rules.ALPHA
-    for arch in ("HYPE", "PREPRINT"):
-        assert next(r for r in result["ranking"] if r["archetype"] == arch)["verdict"] == "SHATTERED"
+    verdict = {r["archetype"]: r["verdict"] for r in result["ranking"]}
+    assert verdict["PREPRINT"] == "SHATTERED"
+    assert verdict["HYPE"] in ("SHATTERED", "NOT BETTER")  # never time-zero aligned, so it cannot validate
     assert result["brief"]["decision"].startswith("PRIORITISE")
     assert all(ev["cite"] for ev in result["brief"]["evidence"])
     assert any(e.action == "shatter" for e in events) and any(e.action == "benchmark" for e in events)
@@ -159,3 +161,64 @@ def test_the_hero_never_writes_numbers_only_choices(tmp_path):
         if e.actor == "agent":
             assert e.action == "decision" and e.hp_delta is None and e.verdict is None
             assert set(e.result) <= {"abilities", "source", "menu", "decision"}
+
+
+# ---------- code-review regressions ----------
+
+def test_a_scroll_with_no_effect_scores_exactly_zero():
+    w = World(CAMPAIGNS["GLP1_ADDICTION"], seed=0)
+    g = J.guardian(w, "alcohol", 0.0)
+    assert g["ss_oos"] == pytest.approx(0.0, abs=1e-12) and g["matched_pairs"] > 0
+
+
+def test_no_matched_pairs_means_no_skill_not_nan(monkeypatch):
+    w = World(CAMPAIGNS["GLP1_ADDICTION"], seed=0)
+    monkeypatch.setattr(J, "match", lambda *a, **k: [])
+    g = J.guardian(w, "alcohol", -0.4)
+    assert g["no_overlap"] and g["ss_oos"] == 0.0 and g["p_dm"] == 1.0
+    assert J.d_final(g) == (15.0, False)
+
+
+def test_ablation_measures_after_the_temporal_guard(tmp_path, monkeypatch):
+    from app.pep.agents import Decision
+    q = PepQuest("t", "GLP1_ADDICTION", Ledger("t", tmp_path, model=QuestEvent), ScriptedHero(), seed=0)
+    q.start()
+    a = next(iter(q.agents.values()))
+    a.credits = 10_000
+    seen = []
+    monkeypatch.setattr(J, "ablation_keeps_drug", lambda w, st: seen.append(st.design) or (True, {"ss_oos": 0.01}))
+    monkeypatch.setattr(q.brain, "choose", lambda *args: Decision(["ABLATION_STRIKE", "TEMPORAL_GUARD"], "both"))
+    q.decide(a, 4)
+    assert seen == ["new_user"] and a.cast[4] == ["ABLATION_STRIKE", "TEMPORAL_GUARD"]
+
+
+def test_leaving_during_a_crash_still_records_the_stop(tmp_path, monkeypatch):
+    q = PepQuest("t", "GLP1_ADDICTION", Ledger("t", tmp_path, model=QuestEvent), ScriptedHero(), seed=0)
+
+    def crash():
+        q.stop()
+        raise ValueError("boom")
+
+    monkeypatch.setattr(q, "start", crash)
+    assert q.run() is None
+    assert q.ledger.events[-1].action == "stopped"
+
+
+def test_the_rodent_formula_shows_the_damage_applied(tmp_path):
+    rats = [e.encounter["combatResolution"] for cid in CAMPAIGNS for e in run(cid, tmp_path)[0]
+            if e.encounter and e.encounter["enemyName"].startswith("Rodent")]
+    assert rats
+    for cr in rats:
+        assert float(cr["executedFormulaLatex"].rsplit("=", 1)[1]) == pytest.approx(cr["rawDamage"], abs=0.006)
+
+
+def test_the_brief_only_claims_what_the_champion_did(tmp_path):
+    from app.pep import report
+    q = PepQuest("t", "GLP1_ADDICTION", Ledger("t", tmp_path, model=QuestEvent), ScriptedHero(), seed=0)
+    q.run()
+    champ = next(a for a in q.agents.values() if a.verdict == "VALIDATED")
+    champ.st.design, champ.st.adjusted = "ever", False
+    champ.m[3] = {**champ.m[3], "p_corr": 0.4}
+    texts = " ".join(e["text"] for e in report.decision_brief(q, champ, [])["evidence"])
+    assert "Not time-zero aligned" in texts and "Not adjusted" in texts and "Does not survive" in texts
+    assert "with no immortal time" not in texts

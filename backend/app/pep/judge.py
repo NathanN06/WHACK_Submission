@@ -238,16 +238,24 @@ def match(ps_t: np.ndarray, ps_c: np.ndarray, caliper: float = rules.CALIPER) ->
 
 def guardian(w: World, outcome: str, beta: float, train_split: str = "train", test_split: str = "holdout") -> dict:
     """Out-of-sample skill on the vaulted, matched new-user holdout: the scroll's effect vs the comparator's risk model."""
-    pooled, comparator, ps = risk_models(w, outcome, w.mask(train_split))
+    _, comparator, ps = risk_models(w, outcome, w.mask(train_split))
     nu = w.new_user(outcome, w.mask(test_split))
     X = w.covariates(nu["i"])
     e = logistic_predict(ps, X)
     t_idx, c_idx = np.nonzero(nu["treated"] == 1)[0], np.nonzero(nu["treated"] == 0)[0]
     pairs = match(e[t_idx], e[c_idx])
+    if len(pairs) < 2:  # no overlap: nothing to score, so no skill can be claimed
+        return {"ss_oos": 0.0, "p_dm": 1.0, "dm_stat": 0.0, "matched_pairs": len(pairs), "no_overlap": True,
+                "loss_scroll": None, "loss_comparator": None, "lift_pct": 0.0,
+                "observed": {"treated": None, "comparator": None},
+                "predicted": {"scroll_treated": None, "baseline_treated": None,
+                              "scroll_comparator": None, "baseline_comparator": None}}
     idx = np.array([t_idx[i] for i, _ in pairs] + [c_idx[j] for _, j in pairs], dtype=int)
     y, treated = nu["y"][idx], nu["treated"][idx]
-    p_base = logistic_predict(pooled, X[idx])
+    # Baseline = "no drug effect": the comparator's risk model for everyone. The scroll starts
+    # from the same model and adds its effect for users, so beta = 0 gives SS = 0 exactly.
     p0 = logistic_predict(comparator, X[idx])
+    p_base = p0
     p_scroll = np.where(treated == 1, 1 - (1 - p0) ** math.exp(beta), p0)
     l_base, l_scroll = (p_base - y) ** 2, (p_scroll - y) ** 2
     ss = 1 - l_scroll.mean() / l_base.mean()
@@ -282,11 +290,12 @@ def d_chrono(m: dict) -> float:
     return 35 * m["l_time"] + 25 * m["delta_purge"]
 
 
-def d_final(m: dict) -> tuple[float, bool]:
-    """(raw damage, eureka). A gain that could be luck (paired p >= .05) is treated as no gain."""
+def d_final(m: dict, time_zero: bool = True) -> tuple[float, bool]:
+    """(raw damage, eureka). A gain that could be luck (paired p >= .05) is treated as no gain, and so is
+    a gain measured on a design with immortal time: an inflated effect can still beat "no effect"."""
     ss = m["ss_oos"]
     if ss > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA:
-        return 0.0, True
+        return (0.0, True) if time_zero else (15.0, False)
     if ss < -rules.SS_MARGIN:
         return min(50.0, 25 + 25 * abs(ss) / rules.SS_REF), False
     return 15.0, False

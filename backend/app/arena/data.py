@@ -90,6 +90,44 @@ def add_derived(df: pd.DataFrame) -> pd.DataFrame:
     return out
 
 
+# The Libre twin of each clean CGMacros meal: the same response windows as build_db.py
+# (15 min baseline, 120 min response) measured on the Libre's real scans (every ~15 min),
+# skipping meals where the Libre sits at its 40 mg/dL floor or misses most of the window.
+LIBRE_RESPONSE = """
+WITH m AS (
+    SELECT CAST(meal_event_id AS VARCHAR) AS meal_event_id, session_id, meal_ts
+    FROM meal_responses WHERE clean AND participant_id LIKE 'CGM-%'),
+b AS (
+    SELECT m.meal_event_id, avg(g.glucose_mgdl) AS base, min(g.glucose_mgdl) AS lo
+    FROM m JOIN glucose g ON g.session_id = m.session_id AND g.sensor = 'libre'
+     AND g.ts >= m.meal_ts - INTERVAL 15 MINUTE AND g.ts < m.meal_ts
+    GROUP BY 1),
+w AS (
+    SELECT m.meal_event_id, max(g.glucose_mgdl) AS peak, min(g.glucose_mgdl) AS lo, count(*) AS n,
+           arg_max(date_diff('minute', m.meal_ts, g.ts), g.glucose_mgdl) AS ttp
+    FROM m JOIN glucose g ON g.session_id = m.session_id AND g.sensor = 'libre'
+     AND g.ts >= m.meal_ts AND g.ts <= m.meal_ts + INTERVAL 120 MINUTE
+    GROUP BY 1)
+SELECT meal_event_id, base AS baseline_glucose, peak - base AS rise, ttp AS time_to_peak
+FROM b JOIN w USING (meal_event_id)
+WHERE b.lo > 40 AND w.lo > 40 AND w.n >= 6
+"""
+
+
+def libre_twin(con, dexcom: pd.DataFrame) -> pd.DataFrame | None:
+    """CGMacros meals re-measured by the Libre: same meals and features, Libre glucose columns."""
+    try:
+        libre = con.execute(LIBRE_RESPONSE).df()
+    except Exception as e:  # no glucose table or columns: the Twins stay away
+        warnings.warn(f"no Libre twin: {str(e).splitlines()[0]}")
+        return None
+    if libre.empty:
+        return None
+    swap = [c for c in ("rise", "baseline_glucose", "time_to_peak") if c in dexcom.columns]
+    out = dexcom.drop(columns=swap).merge(libre[["meal_event_id", *swap]], on="meal_event_id", how="inner")
+    return out[dexcom.columns]
+
+
 def load_all(db_path: str | Path = "data/whack.duckdb"):
     """Returns (train, test, sensors): CGMacros, BUT CGM, and CGMacros per sensor."""
     import duckdb
@@ -104,4 +142,7 @@ def load_all(db_path: str | Path = "data/whack.duckdb"):
     if train is None:
         train = load_meals(con, "CGM-%", next(iter(sensors)) if sensors else None)
     test = load_meals(con, "BUT-%")
+    if len(sensors) < 2:  # meal_responses is Dexcom-only: rebuild the Libre side from raw readings
+        twin = libre_twin(con, train)
+        sensors = {"dexcom": train, "libre": twin} if twin is not None else {}
     return train, test, sensors if len(sensors) >= 2 else {}

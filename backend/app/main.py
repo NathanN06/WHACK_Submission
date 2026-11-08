@@ -57,7 +57,7 @@ class RunRequest(BaseModel):
     emperor: Literal["real", "fake"] | None = None
     llm: bool | None = None  # None = Claude if an API key is set
     replay: str | None = None
-    pace: float = 0.35
+    pace: float = Field(0.35, ge=0, le=5)
     seed: int = 0
 
 
@@ -135,7 +135,7 @@ def run_events(run_id: str, after: int = 0):
         events = run["ledger"].since(after)
     else:
         path = Path(RUNS) / f"{run_id}.jsonl"
-        if not path.exists():
+        if path.resolve().parent != Path(RUNS).resolve() or not path.exists():
             raise HTTPException(404, "unknown run")
         events, done = load(path)[after:], True
     return {"events": [e.model_dump() for e in events], "done": done}

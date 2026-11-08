@@ -60,13 +60,20 @@ def lucky_gains(train: pd.DataFrame, target: str, seed: int) -> np.ndarray:
     return np.array(gains)
 
 
+_LUCKY_CACHE: dict[tuple, int] = {}  # 100 CV fits per entry, so each (data, target, seed) runs once
+
+
 def plan(train: pd.DataFrame, target: str, emperor: str | None, seed: int) -> DecoyPlan:
     """Pick the lucky winner: the noise column that scores best at the Trial out of 100.
 
     This is the garden of forking paths: try enough random ideas and one will
     look like a discovery. Only people it has never seen can unmask it.
     """
-    best = int(np.argmax(lucky_gains(train, target, seed)))
+    key = (len(train), target, seed,
+           int(pd.util.hash_pandas_object(train[[target, "carbs"]], index=False).sum()))
+    if key not in _LUCKY_CACHE:
+        _LUCKY_CACHE[key] = int(np.argmax(lucky_gains(train, target, seed)))
+    best = _LUCKY_CACHE[key]
     return DecoyPlan(lucky_source=best, emperor=emperor, seed=seed)
 
 

@@ -9,7 +9,7 @@ const FALLBACK_CAMPAIGNS = ["A", "B", "C", "D"];
 
 const G = {
   campaigns: [], pick: "A", server: false, claude: false,
-  counts: {},   // campaign letter -> how many hypotheses the Scribe forms ("" = the three hand-written scrolls)
+  counts: {},   // campaign letter -> how many hypotheses the Scribe forms (2 to 6)
   mode: null, questId: null, poll: null, token: 0,
   state: initial(), pending: [], done: false,
   running: true, speed: 1, nextAt: 0, hold: false,
@@ -93,7 +93,9 @@ function titleLoop() {
 }
 
 function syncCount() {   // the hypothesis picker shows the number chosen for the selected campaign
-  if ($("count")) $("count").value = G.counts[G.pick] || "";
+  // the Scribe always forms the scrolls (2 to 6, default 3); the hand-written set is no longer offered
+  if (!(G.pick in G.counts)) G.counts[G.pick] = "3";
+  if ($("count")) $("count").value = G.counts[G.pick];
 }
 
 // ---------- starting, polling, exiting ----------

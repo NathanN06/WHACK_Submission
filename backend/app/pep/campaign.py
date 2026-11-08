@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from . import judge as J
-from . import bridge, report, rules
+from . import bridge, hypotheses, report, rules
 from .agents import Decision, ScriptedHero, menu_for
 from .campaigns import ARCHETYPES, CAMPAIGNS, HERO
 from .world import COVARIATE_LABELS, HOLDOUT_END, SITES, TRAIN_END, Scroll, World
@@ -70,12 +70,27 @@ class Agent:
         return {"id": self.id, "name": self.name, "archetype": self.archetype, "title": arch["title"],
                 "nickname": arch["nickname"], "cls": arch["cls"], "claim": self.claim, "outcome": o.label,
                 "origin": self.scroll.origin, "K": self.st.K, "design": self.st.design, "hp": self.hp,
-                "credits": self.credits, "buffs": list(self.buffs), "kind": "scroll"}
+                "credits": self.credits, "buffs": list(self.buffs), "kind": "scroll",
+                "evidence": "real" if self.scroll.evidence_real else "simulated", "real_evidence": self._real()}
+
+    def _real(self) -> dict | None:
+        """The real papers and trials behind this scroll, as copied from the evidence database."""
+        s = self.scroll
+        if not s.evidence_real:
+            return None
+        recs = s.literature.records
+        return {"topic": s.evidence_topic, "papers": len(recs), "completed_rcts": s.n_rct,
+                "species": {k: sum(r["species"] == k for r in recs) for k in ("human", "rodent", "in vitro")},
+                "examples": [{"title": r["title"], "year": r["year"], "url": r["url"]} for r in recs[:5]]}
 
 
 class PepQuest:
-    def __init__(self, run_id: str, campaign: str, ledger, hero=None, seed: int = 0, pace: float = 0.0):
+    def __init__(self, run_id: str, campaign: str, ledger, hero=None, seed: int = 0, pace: float = 0.0,
+                 n_scrolls: int | None = None, scribe=None):
         self.run_id, self.c = run_id, CAMPAIGNS[campaign]
+        # n_scrolls=None: the campaign's three hand-written scrolls. A number: the Scribe (hypotheses.py) forms
+        # that many from the real evidence database, with Claude when `scribe` (a complete function) is given.
+        self.n_scrolls, self.scribe = n_scrolls, scribe
         self.ledger, self.seed, self.pace = ledger, seed, pace
         self.brain = hero or ScriptedHero()
         self.w = World(self.c, seed)
@@ -139,12 +154,27 @@ class PepQuest:
                       "starting_hp": rules.STARTING_HP, "starting_credits": rules.STARTING_CREDITS},
             "archetypes": ARCHETYPES,
         })
-        for s in c.scrolls:
+        scrolls = c.scrolls
+        if self.n_scrolls is not None:
+            scrolls, formed = hypotheses.form(c, self.n_scrolls, self.scribe)
+            who = "Claude, the Scribe," if formed["source"] == "claude" else "The Scribe"
+            src = ("the real literature (Europe PMC) and trial registry (ClinicalTrials.gov)" if formed["evidence"] == "real"
+                   else "the campaign brief (no real evidence database found)")
+            self._emit(actor="system", action="hypotheses", result=formed,
+                       line=f"{who} formed {formed['count']} hypothes{'is' if formed['count'] == 1 else 'es'} from {src}.",
+                       explain="Each scroll's papers and completed randomized trials are copied from the real evidence "
+                               "database. Its social posts and the patient cohort the Judge tests it on are simulated.")
+        for s in scrolls:
             K = s.outcomes_searched * s.subgroups_searched
             a = Agent(s.key, s, J.ScrollState(outcome=s.outcome, design=s.design, K=K))
             self.agents[a.id] = a
             how = (f"Found in {s.origin}. As carried: exposure counted from the index date for anyone who ever filled "
                    f"a prescription; {K} outcome-and-subgroup combination{'s' if K > 1 else ''} in its search space.")
+            if s.evidence_real:
+                sp = {k: sum(r["species"] == k for r in s.literature.records) for k in ("human", "rodent", "in vitro")}
+                how += (f" Real evidence ({s.evidence_topic}): {len(s.literature.records)} papers "
+                        f"({sp['human']} human, {sp['rodent']} animal, {sp['in vitro']} in vitro) and "
+                        f"{s.n_rct} completed randomized trial{'' if s.n_rct == 1 else 's'}.")
             self._emit(actor="system", action="recruit", agent=a, line=f"The Alchemist takes up {s.title}: \"{s.claim}\"",
                        explain=how, payload={"agent": a.public(w)})
         self._gate(0, f"I am the Warden of the Null. My baseline is {report._comp(c)}, with no drug effect at all. "

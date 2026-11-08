@@ -1,5 +1,5 @@
 // The Peptide & GLP-1 edition game screen: title, playback, battle stage, console, Test Inspector and ledger.
-// One hero (the Alchemist) carries three hypothesis scrolls; the Gatekeeper Skeptic speaks at each gate.
+// One hero (the Alchemist) carries one to six hypothesis scrolls; the Gatekeeper Skeptic speaks at each gate.
 // Every number drawn comes from a ledger row (pep-state.js folds them); nothing here computes a statistic.
 
 const $ = (id) => document.getElementById(id);
@@ -9,6 +9,7 @@ const FALLBACK_CAMPAIGNS = ["A", "B", "C", "D"];
 
 const G = {
   campaigns: [], pick: "A", server: false, claude: false,
+  counts: {},   // campaign letter -> how many hypotheses the Scribe forms ("" = the three hand-written scrolls)
   mode: null, questId: null, poll: null, token: 0,
   state: initial(), pending: [], done: false,
   running: true, speed: 1, nextAt: 0, hold: false,
@@ -54,6 +55,9 @@ async function boot() {
   }
   renderCards();
   $("llm-wrap").hidden = !G.claude;
+  $("count-wrap").hidden = !G.server;
+  $("count").onchange = () => { G.counts[G.pick] = $("count").value; };
+  syncCount();
   $("who").textContent = G.server
     ? (G.claude ? "Server ready. Claude can play the Alchemist, or the hero follows each scroll's scripted plan."
                 : "Server ready. The Alchemist follows each scroll's scripted plan (add an API key to let Claude play).")
@@ -74,6 +78,7 @@ function renderCards() {
     b.onclick = () => {
       G.pick = b.dataset.letter;
       for (const o of document.querySelectorAll(".card")) o.setAttribute("aria-checked", String(o === b));
+      syncCount();
     };
   }
 }
@@ -85,6 +90,10 @@ function titleLoop() {
     requestAnimationFrame(tick);
   };
   tick();
+}
+
+function syncCount() {   // the hypothesis picker shows the number chosen for the selected campaign
+  if ($("count")) $("count").value = G.counts[G.pick] || "";
 }
 
 // ---------- starting, polling, exiting ----------
@@ -104,7 +113,8 @@ async function startGame(mode) {
   if (mode === "live" && G.server) {
     try {
       const res = await fetch("/api/quests", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaign: G.pick, llm: G.claude && $("llm").checked, interactive: true }) });
+        body: JSON.stringify({ campaign: G.pick, llm: G.claude && $("llm").checked, interactive: true,
+                               ...(G.counts[G.pick] ? { scrolls: Number(G.counts[G.pick]) } : {}) }) });
       if (!res.ok) throw new Error(await res.text());
       G.questId = (await res.json()).quest_id;
       G.interactive = true;
@@ -259,7 +269,8 @@ function skipLevel() {
 
 // ---------- the battle stage ----------
 
-const HOME = [[36, 100], [70, 84], [104, 100]];  // where each scroll floats above the Alchemist (feet, 2x)
+// where each scroll floats above the Alchemist (feet, 2x): a front row of three, then a back row for up to six
+const HOME = [[36, 100], [70, 84], [104, 100], [19, 72], [53, 58], [121, 72]];
 const HERO = [70, 168];
 const FRONT = [170, 138];   // the scroll under test floats out to face the enemy
 const GATE = [302, 166];    // the Gatekeeper watches from the far side
@@ -485,9 +496,13 @@ function renderParty() {
       li = G.cards[id] = document.createElement("li");
       li.innerHTML = `<img src="${portrait(a.archetype)}" alt="" width="48" height="48">
         <div class="pinfo"><strong></strong> <small></small>
+          <p class="claim"></p>
           <div class="hp"><b class="trail"></b><i></i><span data-v="${a.hp}">${a.hp} HP</span></div>
           <div class="meta"></div><div class="buffs"></div></div>`;
       li._buffs = [];
+      li.tabIndex = 0; li.setAttribute("role", "button");
+      li.onclick = () => openScroll(id);
+      li.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openScroll(id); } };
       list.appendChild(li);
     }
     const st = a.status !== "active" ? "fallen" : (s.fighter === id && s.enemy ? "fighting" : "");
@@ -495,6 +510,7 @@ function renderParty() {
     li.title = a.claim;
     li.querySelector("strong").textContent = a.name.replace(/^The /, "");
     li.querySelector("small").textContent = a.title;
+    li.querySelector(".claim").textContent = a.claim;   // the hypothesis itself, not just the scroll's name
     const hp = Math.max(0, a.hp), span = li.querySelector(".hp span"), prev = Number(span.dataset.v);
     li.querySelector(".hp i").style.width = `${hp}%`;
     li.querySelector(".hp .trail").style.width = `${hp}%`;
@@ -512,6 +528,37 @@ function renderParty() {
       li._buffs = [...a.buffs];
     }
   }
+}
+
+// Click a scroll card: the full hypothesis, where it came from, its evidence and how it is faring.
+function openScroll(id) {
+  const s = G.state, a = s.agents[id], dlg = $("scroll-dlg");
+  if (!a) return;
+  const ev = a.realEvidence;
+  const evidence = ev
+    ? `<p><b>Real evidence</b> (topic: ${esc(ev.topic)}): ${ev.papers} papers from Europe PMC
+         (${ev.species.human} human, ${ev.species.rodent} animal, ${ev.species["in vitro"]} in vitro) and
+         ${ev.completed_rcts} completed randomized trial${ev.completed_rcts === 1 ? "" : "s"} on ClinicalTrials.gov.</p>
+       ${ev.examples.length ? `<ul class="papers">${ev.examples.map((p) =>
+         `<li><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> ${p.year ? `(${p.year})` : ""}</li>`).join("")}</ul>` : ""}
+       <p class="muted">Social posts and the patient cohort the Judge tests this claim on are simulated.</p>`
+    : `<p class="muted">Simulated evidence: this scroll's papers, posts and patients come from the campaign's simulated world.</p>`;
+  const lines = Object.keys(a.lines).sort().map((lv) =>
+    `<li><b>Level ${ROMAN[lv] || lv}:</b> “${esc(a.lines[lv])}”${(a.abilities[lv] || []).length
+      ? ` · cast ${a.abilities[lv].map((k) => esc(abilityName(k))).join(", ")}` : ""}</li>`).join("");
+  dlg.innerHTML = `<p class="sub">${esc(a.title)} · ${esc(a.nickname || "")}</p>
+    <h3>${esc(a.name)}</h3>
+    <blockquote class="hyp">${esc(a.claim)}</blockquote>
+    <table class="nums">
+      <tr><th>Outcome tested</th><td>${esc(a.outcome || "")}</td></tr>
+      <tr><th>Where it came from</th><td>${esc(a.origin || "")}</td></tr>
+      <tr><th>Status</th><td>${a.hp} HP · ◆ ${a.credits}${a.verdict ? ` · <span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}</td></tr>
+    </table>
+    ${evidence}
+    ${lines ? `<h3>The Alchemist's choices</h3><ul class="lines">${lines}</ul>` : ""}
+    <div class="dlg-buttons"><button class="btn gold" id="scroll-close">Close</button></div>`;
+  $("scroll-close").onclick = () => dlg.close();
+  dlg.showModal();
 }
 
 // Top-left HUD: the scroll the Alchemist is holding up right now.

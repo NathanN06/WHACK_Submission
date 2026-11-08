@@ -37,6 +37,7 @@ function agentFrom(a) {
   return {
     id: a.id, name: a.name, archetype: a.archetype, cls: a.cls, title: a.title, nickname: a.nickname,
     claim: a.claim, outcome: a.outcome, origin: a.origin, design: a.design, K: a.K,
+    evidence: a.evidence || "simulated", realEvidence: a.real_evidence || null, how: "",
     hp: a.hp, credits: a.credits, buffs: a.buffs || [],
     status: "active", verdict: null, abilities: {}, lastDelta: null, lines: {},
   };
@@ -61,8 +62,12 @@ function reduce(s, e) {
       s.campaign = r.campaign; s.rules = r.rules; s.archetypes = r.archetypes; s.simulated = r.simulated !== false;
       s.hero = r.hero || null; s.gatekeeper = r.gatekeeper || null;
       break;
+    case "hypotheses":
+      s.hypotheses = r;   // how the Scribe formed the scrolls, and the real evidence counts it copied
+      break;
     case "recruit": {
       const ag = agentFrom(r.agent);
+      ag.how = e.explain || "";
       s.agents[ag.id] = ag;
       if (!s.order.includes(ag.id)) s.order.push(ag.id);
       break;
@@ -206,7 +211,7 @@ function filterEvents(events, f = {}) {
 // How long a row stays on screen at 1x, in ms.
 function beat(e) {
   if (e.action === "result" && e.result && e.result.scout && !e.hp_delta) return 650;
-  return { quest_start: 500, recruit: 900, gatekeeper: 2200, benchmark: 2000, level_start: 1500, decision: 950,
+  return { quest_start: 500, hypotheses: 2200, recruit: 900, gatekeeper: 2200, benchmark: 2000, level_start: 1500, decision: 950,
            encounter: 900, result: 1300, shatter: 1700, level_complete: 300, finale: 300,
            chat: 0, hero_reply: 0, evidence_intake: 0, mystery_offer: 0, mystery_unresolved: 0, mystery_saved: 0,
            mystery_cancelled: 0, mystery_summon: 1100, mystery_encounter: 1300, mystery_ability: 1000, mystery_result: 2200,

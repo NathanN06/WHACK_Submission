@@ -15,7 +15,7 @@
     <div class="title-copy">
       <h1>Hypothesis<br>Gauntlet</h1>
       <p class="edition">Peptide &amp; GLP-1 Discovery</p>
-      <p class="tag">The Alchemist-Epidemiologist carries three hypothesis scrolls about peptides and GLP-1 drugs
+      <p class="tag">The Alchemist-Epidemiologist carries hypothesis scrolls about peptides and GLP-1 drugs
         through four dungeons of hype, rat studies, p-hacking and immortal time. A deterministic Statistical Judge measures
         every claim and applies fixed damage rules. Only a scroll that predicts unseen patients better than the
         Gatekeeper's active-comparator baseline walks out of the Citadel.</p>
@@ -24,6 +24,8 @@
       <h2>Choose a campaign</h2>
       <div class="cards" id="cards" role="radiogroup" aria-label="Campaign"></div>
       <div class="menu-row">
+        <label class="scroll-count" id="count-wrap" hidden title="How many hypothesis scrolls this campaign carries. A number: the Scribe forms that many from the real evidence database (Claude, when the toggle is on).">Hypotheses
+          <select id="count"><option value="">3, hand-written</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
         <label class="llm-toggle" id="llm-wrap" hidden><input type="checkbox" id="llm"> Claude plays the Alchemist</label>
         <div class="menu-buttons">
           <button class="btn gold" id="begin">Begin the campaign</button>
@@ -152,6 +154,7 @@
   </dialog>
 
   <dialog id="level-done" class="frame"></dialog>
+  <dialog id="scroll-dlg" class="frame scroll-dlg" aria-label="Hypothesis"></dialog>
   <dialog id="how-dlg" class="frame"></dialog>
   <dialog id="tutorial" class="frame"></dialog>
 

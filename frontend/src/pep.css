@@ -41,6 +41,7 @@ button, input { font: inherit; color: inherit; }
   box-shadow: 0 -3px 0 0 var(--navy), 0 3px 0 0 var(--navy), -3px 0 0 0 var(--navy), 3px 0 0 0 var(--navy),
               inset 0 -3px 0 0 rgba(0, 0, 0, .35);
 }
+.btn { transition: background-color .12s, transform .08s; }
 .btn:hover { background: var(--violet); }
 .btn:active { transform: translateY(2px); }
 .btn.gold { background: var(--gold); color: var(--navy); }
@@ -73,8 +74,9 @@ code, pre { font: 13px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace; }
   display: flex; flex-direction: column; gap: 6px; border: 0; cursor: pointer; padding: 12px; background: var(--charcoal);
   box-shadow: inset 0 0 0 2px var(--purple); font: inherit; color: var(--bone); text-align: left;
 }
-.card:hover { box-shadow: inset 0 0 0 2px var(--violet); }
-.card[aria-checked="true"] { box-shadow: inset 0 0 0 3px var(--gold); background: #2a2440; }
+.card { transition: transform .18s cubic-bezier(.2, .9, .3, 1.3), box-shadow .18s, background-color .18s; }
+.card:hover { box-shadow: inset 0 0 0 2px var(--violet); transform: translateY(-2px); }
+.card[aria-checked="true"] { box-shadow: inset 0 0 0 3px var(--gold), 0 6px 0 0 var(--navy); background: #2a2440; transform: translateY(-5px); }
 .card-letter { font: 40px/1 "Jersey 10", sans-serif; color: var(--navy); background: var(--gold); align-self: flex-start; padding: 0 10px; }
 .card strong { font: 24px/1 "Jersey 10", sans-serif; color: var(--gold); }
 .card-q { font-size: 13px; color: var(--bone); flex: 1; }
@@ -117,14 +119,21 @@ code, pre { font: 13px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .hud small { font-size: 11px; color: var(--muted); }
 .hud.fallen { filter: grayscale(1); opacity: .7; }
 .gate-bubble { position: absolute; right: 10px; top: 10px; max-width: 54%; padding: 7px 11px; background: #e8e6f2; color: #1d2433;
-  font-size: 14px; line-height: 1.3; box-shadow: 0 0 0 2px #6a6880, 4px 4px 0 rgba(13, 11, 30, .6); animation: drop .25s steps(4) both; }
+  font-size: 14px; line-height: 1.3; box-shadow: 0 0 0 2px #6a6880, 4px 4px 0 rgba(13, 11, 30, .6);
+  transform-origin: 85% 110%; animation: bubble-in .32s cubic-bezier(.3, 1.5, .5, 1) both; }
+@keyframes bubble-in { from { transform: scale(.4); opacity: 0; } }
 .gate-bubble small { display: block; font: 15px/1 "Jersey 10", sans-serif; color: #4a4860; letter-spacing: .5px; margin-bottom: 3px; }
 .gate-bubble::after { content: ""; position: absolute; right: 28px; bottom: -10px; border: 6px solid transparent; border-top: 6px solid #e8e6f2; border-bottom: 0; }
 .banner {
   position: absolute; left: 50%; top: 38%; translate: -50% 0; text-align: center; padding: 10px 18px;
   background: rgba(13, 11, 30, .92); box-shadow: 0 0 0 3px var(--gold); max-width: 80%;
-  animation: drop .3s steps(5) both;
 }
+.banner.in { animation: banner-in .34s cubic-bezier(.2, .9, .2, 1) both; }
+.banner.in strong { animation: banner-type .5s cubic-bezier(.2, .9, .2, 1) both; }
+.banner.out { animation: banner-out .24s ease-in both; }
+@keyframes banner-in { from { clip-path: inset(0 50% 0 50%); } to { clip-path: inset(0 0 0 0); } }
+@keyframes banner-type { from { letter-spacing: 6px; opacity: 0; } }
+@keyframes banner-out { to { opacity: 0; transform: translateY(-10px); } }
 .banner strong { display: block; font: clamp(24px, 3.4vw, 44px)/1 "Jersey 10", sans-serif; color: var(--gold); }
 .banner small { display: block; margin-top: 4px; font-size: 13px; color: var(--bone); }
 @keyframes drop { from { transform: translateY(-16px); opacity: 0; } }
@@ -142,7 +151,8 @@ code, pre { font: 13px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .pinfo strong { font: 22px/1 "Jersey 10", sans-serif; color: var(--gold); }
 .pinfo small { color: var(--muted); font-size: 11px; display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .hp { position: relative; height: 16px; background: var(--navy); margin: 4px 0; }
-.hp i { position: absolute; inset: 0 auto 0 0; background: var(--heal); transition: width .4s steps(6); }
+.hp i { position: absolute; inset: 0 auto 0 0; background: var(--heal); transition: width .45s cubic-bezier(.2, .8, .2, 1); }
+.hp .trail { position: absolute; inset: 0 auto 0 0; background: #ffb3bd; transition: width .7s cubic-bezier(.5, 0, .7, .4) .38s; }
 .hp span { position: relative; display: block; font: 15px/16px "Jersey 10", sans-serif; padding-left: 5px; color: var(--bone); text-shadow: 1px 1px 0 var(--navy); }
 .meta { display: flex; flex-wrap: wrap; gap: 4px; font-size: 12px; align-items: center; }
 .meta > span:first-child { color: var(--gold); }
@@ -411,3 +421,57 @@ table.score tr.bench td { background: #f3f1f8; }
 .overworld th, .overworld td { padding: 4px 10px; border-bottom: 1px solid #d8dde6; text-align: left; }
 .overworld h4 { margin: 12px 0 4px; font-size: 16px; }
 .overworld pre { background: #eef1f6; padding: 8px; overflow: auto; }
+
+/* ---------- motion: every change travels instead of teleporting ---------- */
+.screen-wipe { position: fixed; inset: 0; width: 100vw; height: 100vh; z-index: 50; pointer-events: none; image-rendering: pixelated; }
+
+/* the party: a hit shakes the card and flashes it red, a heal glows green */
+.pcard { position: relative; transition: transform .22s cubic-bezier(.2, .9, .3, 1.2), box-shadow .22s, opacity .5s, filter .5s; }
+.pcard::after { content: ""; position: absolute; inset: 0; pointer-events: none; opacity: 0; }
+.pcard.fighting { transform: translateY(-4px); box-shadow: inset 0 0 0 2px var(--gold), 0 4px 0 0 var(--navy), 0 0 16px rgba(232, 184, 71, .25); }
+.pcard.hurt { animation: hurt .42s cubic-bezier(.36, .07, .19, .97); }
+.pcard.hurt::after { background: var(--blood); animation: flash .42s ease-out; }
+.pcard.healed::after { background: var(--heal); animation: flash .6s ease-out; }
+@keyframes hurt { 15% { translate: -5px 0; } 35% { translate: 4px 0; } 55% { translate: -3px 0; } 75% { translate: 2px 0; } }
+@keyframes flash { 0% { opacity: .45; } 100% { opacity: 0; } }
+.buffs span.fresh { animation: chip-in .4s cubic-bezier(.3, 1.6, .5, 1) both; }
+@keyframes chip-in { from { transform: scale(.3); opacity: 0; } }
+
+/* the HUD and the enemy plate slide in from their own edges */
+.hud.enter { animation: slide-l .32s cubic-bezier(.2, .9, .3, 1) both; }
+.enemy-plate.enter { animation: slide-r .32s cubic-bezier(.2, .9, .3, 1) both; }
+@keyframes slide-l { from { transform: translateX(-24px); opacity: 0; } }
+@keyframes slide-r { from { transform: translateX(24px); opacity: 0; } }
+
+/* progress: the new current level pops once */
+.nodes li.current b { animation: node-pop .45s cubic-bezier(.3, 1.6, .5, 1); }
+@keyframes node-pop { from { transform: scale(.6); } }
+
+/* the inspector settles in when it shows a new ruling; new ledger rows glow gold, then fade */
+#insp-body.swap { animation: settle .22s ease-out; }
+@keyframes settle { from { opacity: .35; transform: translateY(4px); } }
+#ledger tr.new td { animation: row-new 1.4s ease-out; }
+@keyframes row-new { 0% { background: rgba(232, 184, 71, .32); } 100% { background: transparent; } }
+
+/* dialogs rise into place over a fading backdrop */
+dialog[open] { animation: dlg-in .3s cubic-bezier(.2, .9, .3, 1.15); }
+dialog[open]::backdrop { animation: fade-in .3s ease-out; }
+@keyframes dlg-in { from { opacity: 0; transform: translateY(14px) scale(.97); } }
+@keyframes fade-in { from { opacity: 0; } }
+
+/* Reduce motion (the button or the system setting) turns all of it off */
+body.reduced *, body.reduced *::before, body.reduced *::after, body.reduced dialog::backdrop { animation: none !important; transition: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
+  .screen-wipe { display: none; }
+}
+
+/* the bridge: its banners sit above the hero, and the verdict banner wears the colour of the outcome */
+#bridge-banner { top: 15%; }
+#bridge-banner.v-win { box-shadow: 0 0 0 3px var(--gold), 0 0 40px rgba(255, 224, 138, .45); }
+#bridge-banner.v-honest { box-shadow: 0 0 0 3px #cfe6ff, 0 0 30px rgba(190, 220, 255, .35); }
+#bridge-banner.v-honest strong { color: #dceaff; }
+#bridge-banner.v-fall, #bridge-banner.v-escape { box-shadow: 0 0 0 3px var(--blood), 0 0 30px rgba(224, 64, 95, .4); }
+#bridge-banner.v-fall strong, #bridge-banner.v-escape strong { color: #ff8a9a; }
+.trial-card { animation: dlg-in .5s cubic-bezier(.2, .9, .3, 1.15) both; }
+.room-headline { animation: dlg-in .6s cubic-bezier(.2, .9, .3, 1.15) .3s both; }

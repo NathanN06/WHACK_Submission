@@ -2,16 +2,19 @@
 // Trial of Truth, on a crumbling bridge over the abyss with a golden portal to the Overworld at the far end.
 // Everything shown is read from ledger rows (bridge.py); the scene only animates what the Judge decided.
 
-const BR = { phase: "idle", t0: 0, heroX: 30, flash: 0, outcome: null, crossed: false, holdTimer: null, pendingChoice: false };
+const BR = { phase: "idle", t0: 0, heroX: 30, flash: 0, outcome: null, crossed: false, holdTimer: null, pendingChoice: false,
+             kind: null, verdictX: 140, parts: [], fell: {}, entered: false, screamed: false, last: 0 };
 const BRIDGE_Y = 112, PORTAL_X = 286, PORTAL_Y = 100;
 
 function showBridge() {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   $("screen-game").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = false;
   $("bridge-events").innerHTML = "";
+  $("bridge-banner").className = "banner";
   $("bridge-speech").innerHTML = '<p class="muted">The hero steps onto the bridge and opens its notebook…</p>';
   $("bridge-review").innerHTML = "";
-  Object.assign(BR, { phase: "arrive", t0: performance.now(), heroX: 6, flash: 0, outcome: null, crossed: false });
+  Object.assign(BR, { phase: "arrive", t0: performance.now(), heroX: 6, flash: 0, outcome: null, crossed: false,
+                      kind: null, parts: [], fell: {}, entered: false, screamed: false });
   window.scrollTo(0, 0);
 }
 
@@ -29,8 +32,10 @@ function bridgeBanner(title, sub) {
   const b = $("bridge-banner");
   b.innerHTML = `<strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ""}`;
   b.hidden = false;
+  pulse(b, "in");
   clearTimeout(b._t);
-  b._t = setTimeout(() => { b.hidden = true; }, 2600 / G.speed);
+  b._t = setTimeout(() => { b.classList.add("out"); setTimeout(() => { b.hidden = true; b.classList.remove("out"); }, 240); },
+                    BR.phase === "verdict" ? 4200 : 2600 / G.speed);   // the verdict is read at its own pace
 }
 
 function bridgeEvent(e) {
@@ -53,14 +58,20 @@ function bridgeEvent(e) {
     case "trial_result":
       bridgeLog(e, "trial");
       BR.outcome = r.trial.outcome; BR.crossed = !!r.trial.crossed; BR.phase = "verdict"; BR.t0 = performance.now();
-      bridgeBanner(r.trial.outcome, r.trial.crossed ? "The hero crosses" : "The bridge gives way");
+      BR.kind = verdictKind(BR.outcome, BR.crossed); BR.verdictX = BR.heroX;
+      $("bridge-banner").className = `banner bridge-verdict v-${BR.kind}`;
+      bridgeBanner(r.trial.outcome, { win: "The path lights up. The hero crosses into the Overworld",
+                                      honest: "No discovery claimed. The hero carries an honest report across",
+                                      escape: "The bridge breaks behind the hero", fall: "The bridge gives way" }[BR.kind]);
       renderTrial(r.trial);
       if (!G.pinned) inspect(e);
       break;
-    case "finale":
-      setTimeout(() => { if (G.state.finale && !$("screen-bridge").hidden) { $("screen-bridge").hidden = true; showRoom(); } },
-                 (BR.crossed ? 5200 : 4200) / G.speed);
+    case "finale": {
+      // open the brief only once the verdict has finished playing
+      const wait = BR.kind && !G.reduced ? Math.max(600, verdictLength(BR.kind) - (performance.now() - BR.t0) + 400) : 1200;
+      setTimeout(() => { if (G.state.finale && !$("screen-bridge").hidden) { $("screen-bridge").hidden = true; showRoom(); } }, wait);
       break;
+    }
     default:
       if (e.level === 5 && e.line && e.action !== "self_assessment") bridgeLog(e);
       if (e.action === "mystery_result" && !G.pinned) inspect(e);
@@ -160,6 +171,36 @@ function renderTrial(t) {
 }
 
 // ---------- the scene ----------
+// The verdict is choreographed by outcome, always in the same order: the beam of judgment falls on the hero,
+// then the bridge answers. VALIDATED DISCOVERY: the runes light a golden path and the portal flares.
+// JUSTIFIED UNCERTAINTY: a calm lantern walk into a moonlit portal. INVALID METHODOLOGY / UNJUSTIFIED CONFIDENCE:
+// cracks spread, the bridge crumbles and the portal seals (the hero escapes only if the Judge says it crossed).
+
+const MOOD = {
+  win: { beam: "255,224,138", rune: "#ffe08a", flood: "#fff3c4", tint: "255,200,90" },
+  honest: { beam: "190,220,255", rune: "#cfe6ff", flood: "#dceaff", tint: "120,160,230" },
+  fall: { beam: "255,74,90", rune: "#ff4a5a", flood: "#07040e", tint: "200,30,60" },
+  escape: { beam: "255,74,90", rune: "#ff8a5a", flood: "#fff3c4", tint: "200,60,40" },
+};
+// timeline (ms after the verdict): beam, then the walk, the portal and the flood
+const TL = {
+  win: { walk: 1000, walkDur: 2800, enter: 450, flood: 1300 },
+  honest: { walk: 1100, walkDur: 4000, enter: 600, flood: 1500 },
+  escape: { walk: 1500, walkDur: 1500, enter: 400, flood: 1100 },
+  fall: { crack: 900, drop: 1700, flood: 1400 },
+};
+
+function verdictKind(outcome, crossed) {
+  if (outcome === "VALIDATED DISCOVERY") return "win";
+  if (outcome === "JUSTIFIED UNCERTAINTY") return "honest";
+  return crossed ? "escape" : "fall";
+}
+
+// How long the verdict takes to play, so the brief opens only once it has finished.
+function verdictLength(kind) {
+  const t = TL[kind];
+  return kind === "fall" ? t.drop + 1800 + t.flood : t.walk + t.walkDur + t.enter + t.flood;
+}
 
 function bridgeLoop() {
   const ctx = crispContext($("bridge-canvas"));
@@ -175,10 +216,20 @@ function bridgeLoop() {
 }
 
 function drawBridge(ctx, now, f) {
+  const dt = Math.min(0.05, BR.last ? (now - BR.last) / 1000 : 0.016);
+  BR.last = now;
+  const V = BR.phase === "verdict" ? (G.reduced ? 1e6 : now - BR.t0) : -1;
+  const kind = BR.kind, M = kind ? MOOD[kind] : null, T = kind ? TL[kind] : null;
+  const breaking = V >= 0 && (kind === "fall" || kind === "escape");
+  ctx.save();
   ctx.clearRect(0, 0, 320, 180);
+  if (breaking && V > 900 && V < 2600 && !G.reduced) {   // the bridge breaking shakes the world
+    const k = 1 - (V - 900) / 1700;
+    ctx.translate(Math.round(Math.sin(V / 24) * 3 * k), Math.round(Math.cos(V / 33) * 2 * k));
+  }
   // the abyss: deep violet bands
   const bands = ["#120a22", "#160c2a", "#1a0e32", "#1f1038", "#24123e", "#1c0e30", "#140a24", "#0c0616", "#07040e"];
-  bands.forEach((c, i) => rect(ctx, 0, i * 20, 320, 20, c));
+  bands.forEach((c, i) => rect(ctx, -4, i * 20, 328, 20, c));
   for (let k = 0; k < 30; k++) rect(ctx, (k * 53) % 320, (k * 29) % 70, 1, 1, k % 3 ? "#5a4a8a" : "#9a8ad0");
   // distant ruined castles
   const ruin = "#22183a";
@@ -187,39 +238,34 @@ function drawBridge(ctx, now, f) {
     for (let b = 0; b < 3; b++) rect(ctx, x0 + b * 5, 78 - h, 3, 4, ruin);
     if ((x0 + Math.floor(f / 40)) % 3 === 0) rect(ctx, x0 + 5, 90 - h, 2, 3, "#3f7fbf");
   }
-  rect(ctx, 0, 80, 320, 4, "#1a1230");
-  // drifting fog in the abyss
+  rect(ctx, -4, 80, 328, 4, "#1a1230");
+  // drifting fog in the abyss (it rises for an honest ending)
+  const fogUp = kind === "honest" && V > 0 ? Math.min(18, V / 220) : 0;
   for (let k = 0; k < 8; k++) {
     const fx = ((k * 61 + f * 0.25 * (k % 2 ? 1 : -1)) % 380) - 30;
-    ellipse(ctx, fx, 140 + (k % 3) * 12, 26, 4, k % 2 ? "#2a1a48" : "#22143c");
+    ellipse(ctx, fx, 140 + (k % 3) * 12 - fogUp, 26, 4, k % 2 ? "#2a1a48" : "#22143c");
   }
   // floating stone fragments
   for (let k = 0; k < 7; k++) {
     const x = 18 + k * 44, y = 60 + (k % 3) * 34 + Math.round(Math.sin(f / 30 + k) * 3);
     rect(ctx, x, y, 8 + (k % 3) * 3, 4, "#3a3050"); rect(ctx, x + 1, y, 6 + (k % 3) * 3, 1, "#5a5078"); rect(ctx, x + 2, y + 4, 4, 2, "#2a2240");
   }
-  // the golden portal, with the green Overworld inside
-  drawPortal(ctx, f);
-  // the bridge: stone blocks, cracks and runes; collapsing under an unjustified or invalid claim
-  const collapse = BR.phase === "verdict" && (BR.outcome === "INVALID METHODOLOGY" || BR.outcome === "UNJUSTIFIED CONFIDENCE");
-  const ct = collapse ? Math.min(1, (now - BR.t0) / 1800) : 0;
-  for (let x = 4; x < PORTAL_X - 16; x += 8) {
-    const mid = x > 120 && x < 210, fall = collapse && mid && (BR.outcome === "INVALID METHODOLOGY" || x > 150 && x < 190);
-    const dy = fall ? Math.round(ct * ct * (60 + (x % 24))) : 0;
-    rect(ctx, x, BRIDGE_Y + dy, 8, 10, "#4a4060"); rect(ctx, x + 1, BRIDGE_Y + 1 + dy, 6, 8, (x / 8) % 2 ? "#6e6488" : "#625a7c");
-    rect(ctx, x + 1, BRIDGE_Y + 1 + dy, 6, 1, "#8a80a6");
-    if ((x / 8) % 5 === 2) rect(ctx, x + 3, BRIDGE_Y + 4 + dy, 2, 3, `rgba(127,224,255,${0.45 + 0.4 * Math.sin(f / 10 + x)})`);  // runes
-    if ((x / 8) % 7 === 3) rect(ctx, x + 2, BRIDGE_Y + 8 + dy, 3, 1, "#2a2240");  // cracks
+  // the mood washes over the sky once the Judge has spoken
+  if (M && V > 300) {
+    const a = Math.min(1, (V - 300) / 1400) * (kind === "fall" ? 0.22 + 0.06 * Math.sin(V / 160) : 0.16);
+    ctx.fillStyle = `rgba(${M.tint},${a})`; ctx.fillRect(-4, -4, 328, 92);
   }
-  // pillars with blue flames
-  for (const px of [24, 96, 168, 240]) {
-    rect(ctx, px, BRIDGE_Y - 14, 4, 14, "#3a3050"); rect(ctx, px - 1, BRIDGE_Y - 16, 6, 2, "#5a5078");
-    const fl = f % 12 < 6;
-    rect(ctx, px, BRIDGE_Y - 21, 4, 5, fl ? "#3fa0ff" : "#2f7fdf"); rect(ctx, px + 1, BRIDGE_Y - 24, 2, 3, fl ? "#9fe0ff" : "#7fc0ff");
-    aura(ctx, px + 2, BRIDGE_Y - 20, 14, "63,160,255", 0.25);
+  drawPortal(ctx, f, V, kind);
+  drawDeck(ctx, now, f, V, kind, M);
+  drawBridgeHero(ctx, now, f, V, kind, T);
+  stepParticles(ctx, BR.parts, dt);
+  // the beam of judgment
+  if (M && V >= 0 && V < 1100) {
+    const t = V / 1100, w = Math.round(2 + Math.sin(Math.PI * t) * 12), x = Math.round(BR.heroX);
+    ctx.fillStyle = `rgba(${M.beam},${0.25 * Math.sin(Math.PI * t)})`; ctx.fillRect(x - w * 2, 0, w * 4, BRIDGE_Y);
+    ctx.fillStyle = `rgba(${M.beam},${0.75 * Math.sin(Math.PI * t)})`; ctx.fillRect(x - Math.floor(w / 2), 0, w, BRIDGE_Y);
+    if (V < 120 && !G.reduced) { ctx.fillStyle = `rgba(${M.beam},0.35)`; ctx.fillRect(-4, -4, 328, 188); }
   }
-  // the hero
-  drawBridgeHero(ctx, now, f, collapse, ct);
   // the evolution flash
   if (BR.flash && now - BR.flash < 1800 && !G.reduced) {
     const t = (now - BR.flash) / 1800;
@@ -230,56 +276,136 @@ function drawBridge(ctx, now, f) {
     }
     ctx.save(); ctx.globalAlpha = Math.max(0, 0.6 - t); ctx.fillStyle = "#ffffff"; ctx.fillRect(0, 0, 320, 180); ctx.restore();
   }
-  // crossing: the portal light floods the screen
-  if (BR.phase === "verdict" && BR.crossed && BR.heroX > PORTAL_X - 6) {
-    const t = Math.min(1, (now - BR.arrived) / 1500);
-    ctx.save(); ctx.globalAlpha = t * 0.85; ctx.fillStyle = "#fff6d0"; ctx.fillRect(0, 0, 320, 180); ctx.restore();
+  ctx.restore();
+  // the ending floods the screen: light through the portal, or the dark of the abyss
+  if (M && V >= 0) {
+    const start = kind === "fall" ? T.drop + 1800 : T.walk + T.walkDur + T.enter;
+    const k = clamp01((V - start) / T.flood);
+    if (k > 0) drawDissolve(ctx, 320, 180, ease.inOut(k), 10, M.flood);
   }
 }
 
-function drawPortal(ctx, f) {
-  ctx.save();
-  ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, 22, 36, 0, 0, Math.PI * 2); ctx.clip();
-  rect(ctx, PORTAL_X - 22, PORTAL_Y - 36, 44, 40, "#9ccaf2"); rect(ctx, PORTAL_X - 22, PORTAL_Y - 8, 44, 10, "#c4e0f6");
-  disc(ctx, PORTAL_X + 8, PORTAL_Y - 24, 4, "#ffe08a");
-  ellipse(ctx, PORTAL_X - 8, PORTAL_Y + 4, 20, 8, "#5fbf6a"); ellipse(ctx, PORTAL_X + 12, PORTAL_Y + 8, 18, 8, "#4fae5a");
-  rect(ctx, PORTAL_X - 22, PORTAL_Y + 10, 44, 30, "#3c8a46");
-  for (const tx of [-12, -2, 10]) { rect(ctx, PORTAL_X + tx, PORTAL_Y + 2, 2, 5, "#6a4a2a"); disc(ctx, PORTAL_X + tx + 1, PORTAL_Y, 3, "#2f7a3a"); }
+function drawPortal(ctx, f, V, kind) {
+  // win: it flares; honest: it cools to moonlight; fall/escape: it seals (after the hero, if it escapes)
+  let scale = 1, flare = 0;
+  if (kind === "win" && V > 600) flare = Math.min(1, (V - 600) / 900);
+  if (kind === "fall" && V > 700) scale = 1 - ease.inOut(clamp01((V - 700) / 1600));
+  if (kind === "escape") { const sealAt = TL.escape.walk + TL.escape.walkDur + TL.escape.enter; if (V > sealAt) scale = 1 - ease.inOut(clamp01((V - sealAt) / 700)); }
+  const rx = 22 * scale, ry = 36 * scale;
+  if (scale > 0.02) {
+    ctx.save();
+    ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, rx, ry, 0, 0, Math.PI * 2); ctx.clip();
+    rect(ctx, PORTAL_X - 22, PORTAL_Y - 36, 44, 40, "#9ccaf2"); rect(ctx, PORTAL_X - 22, PORTAL_Y - 8, 44, 10, "#c4e0f6");
+    disc(ctx, PORTAL_X + 8, PORTAL_Y - 24, 4, "#ffe08a");
+    ellipse(ctx, PORTAL_X - 8, PORTAL_Y + 4, 20, 8, "#5fbf6a"); ellipse(ctx, PORTAL_X + 12, PORTAL_Y + 8, 18, 8, "#4fae5a");
+    rect(ctx, PORTAL_X - 22, PORTAL_Y + 10, 44, 30, "#3c8a46");
+    for (const tx of [-12, -2, 10]) { rect(ctx, PORTAL_X + tx, PORTAL_Y + 2, 2, 5, "#6a4a2a"); disc(ctx, PORTAL_X + tx + 1, PORTAL_Y, 3, "#2f7a3a"); }
+    if (kind === "honest" && V > 500) { ctx.fillStyle = `rgba(30,40,90,${Math.min(0.55, (V - 500) / 2000)})`; ctx.fillRect(PORTAL_X - 22, PORTAL_Y - 36, 44, 72); }
+    ctx.restore();
+  }
+  const gold = kind === "honest" && V > 500 ? "190,220,255" : "255,224,138";
+  aura(ctx, PORTAL_X, PORTAL_Y, 46 * Math.max(scale, 0.01) + flare * 30, gold, (0.28 + 0.06 * Math.sin(f / 14)) * Math.max(scale, 0.01) + flare * 0.25);
+  const ring = kind === "fall" && V > 700 ? "#6a6880" : kind === "honest" && V > 500 ? "#cfe6ff" : "#e8b847";
+  ctx.save(); ctx.strokeStyle = ring; ctx.lineWidth = 4;
+  ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, Math.max(0.5, 24 * scale), Math.max(0.5, 38 * scale), 0, 0, Math.PI * 2); ctx.stroke();
+  if (scale > 0.02) { ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, 26 * scale + flare * 3, 40 * scale + flare * 4, 0, 0, Math.PI * 2); ctx.stroke(); }
   ctx.restore();
-  aura(ctx, PORTAL_X, PORTAL_Y, 46, "255,224,138", 0.28 + 0.06 * Math.sin(f / 14));
-  ctx.save(); ctx.strokeStyle = "#e8b847"; ctx.lineWidth = 4;
-  ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, 24, 38, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.strokeStyle = "#ffe08a"; ctx.lineWidth = 1; ctx.beginPath(); ctx.ellipse(PORTAL_X, PORTAL_Y, 26, 40, 0, 0, Math.PI * 2); ctx.stroke();
-  ctx.restore();
-  for (let k = 0; k < 8; k++) {
-    const a = f / 40 + k * Math.PI / 4;
-    rect(ctx, PORTAL_X + Math.round(Math.cos(a) * 30), PORTAL_Y + Math.round(Math.sin(a) * 44), 2, 2, k % 2 ? "#ffe08a" : "#e8b847");
+  const n = 8 + Math.round(flare * 10);
+  for (let k = 0; k < n * scale; k++) {
+    const a = f / (40 - flare * 20) + k * Math.PI * 2 / n;
+    rect(ctx, PORTAL_X + Math.round(Math.cos(a) * (30 + flare * 6) * scale), PORTAL_Y + Math.round(Math.sin(a) * (44 + flare * 6) * scale), 2, 2, k % 2 ? "#ffe08a" : "#e8b847");
+  }
+  if (kind === "fall" && V > 2200 && V < 2500 && !G.reduced) { ctx.fillStyle = "rgba(255,255,255,0.5)"; ctx.fillRect(PORTAL_X - 3, PORTAL_Y - 3, 6, 6); }
+}
+
+// The deck: stone blocks with runes. Runes light up in a wave toward the portal on a good verdict;
+// on a bad one cracks run out from under the hero and the middle span falls away, block by block.
+function drawDeck(ctx, now, f, V, kind, M) {
+  const breaking = V >= 0 && (kind === "fall" || kind === "escape");
+  const crackT = breaking ? clamp01((V - 700) / 900) : 0;
+  const wave = V >= 0 && (kind === "win" || kind === "honest") ? BR.verdictX + Math.max(0, V - 700) * (kind === "win" ? 0.16 : 0.09) : -1;
+  for (let x = 4; x < PORTAL_X - 16; x += 8) {
+    const span = kind === "fall" ? x > 110 && x < 230 : x > 150 && x < 200;
+    let dy = 0, rot = 0;
+    if (breaking && span) {
+      const delay = Math.abs(x - 170) * 6, t = Math.max(0, V - 1500 - delay) / 1000;
+      dy = Math.round(t * t * 160); rot = t * ((x / 8) % 2 ? 1.6 : -1.3);
+      if (t > 0 && !BR.fell[x] && !G.reduced) {
+        BR.fell[x] = true;
+        burst(BR.parts, x + 4, BRIDGE_Y + 4, 8, ["#6e6488", "#8a80a6", "#3a3050"], { speed: 40, up: 10, gravity: 160, life: 0.9 });
+      }
+    }
+    if (dy > 90) continue;
+    ctx.save(); ctx.translate(x + 4, BRIDGE_Y + 5 + dy); ctx.rotate(rot);
+    rect(ctx, -4, -5, 8, 10, "#4a4060"); rect(ctx, -3, -4, 6, 8, (x / 8) % 2 ? "#6e6488" : "#625a7c"); rect(ctx, -3, -4, 6, 1, "#8a80a6");
+    if ((x / 8) % 5 === 2) {
+      const lit = wave >= 0 && x <= wave;
+      const c = lit ? M.rune : breaking && V > 400 ? `rgba(255,74,90,${0.5 + 0.4 * Math.sin(f / 4 + x)})` : `rgba(127,224,255,${0.45 + 0.4 * Math.sin(f / 10 + x)})`;
+      rect(ctx, -1, -1, 2, 3, c);   // runes
+      if (lit) aura(ctx, 0, 0, 7, kind === "win" ? "255,224,138" : "190,220,255", 0.5);
+    }
+    if ((x / 8) % 7 === 3) rect(ctx, -2, 3, 3, 1, "#2a2240");  // old cracks
+    if (breaking && crackT > 0 && Math.abs(x - 170) < 70 * crackT) {   // fractures run out from the middle
+      const a = ((x * 5) % 5) - 2, flip = (x / 8) % 2 ? 1 : -1;
+      for (const [dx, dy] of [[0, -5], [1, -4], [0, -3], [1, -2], [2, -1], [1, 0], [2, 1]]) rect(ctx, a + dx * flip, dy, 1, 1, "#140a20");
+      if (V > 1100) rect(ctx, a + flip, -2, 1, 1, `rgba(255,74,90,${0.5 + 0.5 * Math.sin(f / 3 + x)})`);   // glowing from inside
+    }
+    ctx.restore();
+  }
+  // pillars with blue flames (they turn the colour of the verdict)
+  for (const px of [24, 96, 168, 240]) {
+    rect(ctx, px, BRIDGE_Y - 14, 4, 14, "#3a3050"); rect(ctx, px - 1, BRIDGE_Y - 16, 6, 2, "#5a5078");
+    const fl = f % 12 < 6, red = breaking && V > 400, warm = kind === "win" && wave > px;
+    const c1 = red ? (fl ? "#ff4a5a" : "#d8304a") : warm ? (fl ? "#ffd04a" : "#e8a830") : fl ? "#3fa0ff" : "#2f7fdf";
+    const c2 = red ? "#ffb0b8" : warm ? "#fff3c4" : fl ? "#9fe0ff" : "#7fc0ff";
+    rect(ctx, px, BRIDGE_Y - 21, 4, 5, c1); rect(ctx, px + 1, BRIDGE_Y - 24, 2, 3, c2);
+    aura(ctx, px + 2, BRIDGE_Y - 20, 14, red ? "255,74,90" : warm ? "255,208,74" : "63,160,255", 0.25);
   }
 }
 
-function drawBridgeHero(ctx, now, f, collapse, ct) {
-  const t = now - BR.t0;
-  let target = 34;
-  if (BR.phase === "arrive") target = 34;
-  if (BR.phase === "trial") target = 140;
-  if (BR.phase === "verdict") target = BR.crossed ? PORTAL_X : 158;
-  const speed = BR.phase === "verdict" && BR.crossed ? 0.9 : 0.6;
-  if (Math.abs(BR.heroX - target) > 0.5) BR.heroX += Math.sign(target - BR.heroX) * Math.min(speed, Math.abs(target - BR.heroX));
-  else if (BR.phase === "verdict" && BR.crossed && !BR.arrived) BR.arrived = now;
-  if (BR.phase !== "verdict") BR.arrived = 0;
-  let y = BRIDGE_Y;
-  const falls = collapse && !BR.crossed;
-  if (falls) y += Math.round(ct * ct * 90);
-  if (BR.phase === "verdict" && BR.crossed && BR.heroX > PORTAL_X - 10) return;  // through the portal
-  const walking = Math.abs(BR.heroX - target) > 0.5;
-  const bob = walking && !G.reduced ? (Math.floor(f / 6) % 2) : 0;
-  if (G.state.version === "V2") aura(ctx, BR.heroX, y - 14, 18, "127,224,255", 0.45);
+function drawBridgeHero(ctx, now, f, V, kind, T) {
   const img = pepSprite("Alchemist");
-  ctx.save(); ctx.translate(Math.round(BR.heroX), y - bob); ctx.scale(2, 2);
-  if (falls) ctx.rotate(ct * 1.2);
+  let x = BR.heroX, y = BRIDGE_Y, rot = 0, scale = 2, alpha = 1, walking = false;
+  if (V < 0) {   // before the verdict: walk to the review spot, then to the middle for the trial
+    const target = BR.phase === "trial" ? 140 : 34;
+    walking = Math.abs(x - target) > 0.5;
+    if (walking) x += Math.sign(target - x) * Math.min(G.reduced ? 99 : 0.9, Math.abs(target - x));
+  } else if (kind === "fall") {
+    // it steps out over the middle span, still confident, just before the span gives way
+    const w = clamp01((V - 300) / (TL.fall.drop - 500));
+    walking = w > 0 && w < 1;
+    x = BR.verdictX + (172 - BR.verdictX) * ease.inOut(w);
+    const t = Math.max(0, V - TL.fall.drop) / 1800;
+    if (t > 0) { y += Math.round(t * t * 140); rot = t * 2.4; }
+    if (t > 0 && !BR.screamed && !G.reduced) { BR.screamed = true; burst(BR.parts, x, y - 10, 10, ["#ff4a5a", "#ffffff"], { speed: 50, life: 0.5 }); }
+    if (y > 200) alpha = 0;
+  } else {
+    const t = clamp01((V - T.walk) / T.walkDur), e = kind === "escape" ? ease.out(t) : ease.inOut(t);
+    walking = t > 0 && t < 1;
+    x = BR.verdictX + (PORTAL_X - BR.verdictX) * e;
+    if (kind === "escape" && walking && !G.reduced) y -= Math.round(Math.abs(Math.sin(t * Math.PI * 5)) * 6);   // leaping the gaps
+    const k = clamp01((V - T.walk - T.walkDur) / T.enter);   // stepping into the portal
+    if (k > 0) {
+      scale = 2 * (1 - ease.inOut(k)); alpha = 1 - k;
+      if (!BR.entered && !G.reduced) {
+        BR.entered = true;
+        burst(BR.parts, PORTAL_X, PORTAL_Y + 4, kind === "win" ? 46 : 22, kind === "win" ? ["#ffe08a", "#fff3c4", "#e8b847"] : ["#cfe6ff", "#ffffff"], { speed: 70, up: 20, gravity: 30, life: 1.2 });
+      }
+    }
+    if (kind === "win" && walking && f % 3 === 0 && !G.reduced) burst(BR.parts, x - 6, y - 4, 1, ["#ffe08a", "#fff3c4"], { speed: 8, up: 14, gravity: -10, life: 0.8 });
+  }
+  BR.heroX = x;
+  if (alpha <= 0 || scale <= 0.05) return;
+  const bob = walking && !G.reduced ? (Math.floor(f / (kind === "honest" ? 9 : 5)) % 2) : 0;
+  if (G.state.version === "V2") aura(ctx, x, y - 14, 18, "127,224,255", 0.45);
+  if (kind === "honest" && V > 600) {   // the lantern of an honest report
+    aura(ctx, x + 9, y - 14, 30, "255,214,140", 0.4 + 0.05 * Math.sin(f / 8));
+    rect(ctx, x + 8, y - 22 - bob, 1, 4, "#3a3050"); rect(ctx, x + 6, y - 18 - bob, 5, 5, "#ffd68c"); rect(ctx, x + 7, y - 17 - bob, 3, 3, "#fff6d0");
+  }
+  ctx.save(); ctx.globalAlpha = alpha; ctx.translate(Math.round(x), y - bob); ctx.scale(scale, scale);
+  if (rot) ctx.rotate(rot);
   blit(ctx, img, 0, 0); ctx.restore();
-  if (G.state.version === "V2") pixelText(ctx, "V2", BR.heroX, y - img.height * 2 - 10, "#7fe0ff");
-  if (collapse && BR.crossed && !G.reduced && f % 10 < 5) pixelText(ctx, "!", BR.heroX + 10, y - 40, "#ff4a5a");
+  if (G.state.version === "V2" && scale >= 2) pixelText(ctx, "V2", x, y - img.height * 2 - 10, "#7fe0ff");
 }
 
 // ---------- the Overworld report (appended to the Research Brief) ----------
@@ -327,24 +453,86 @@ function renderOverworld(f) {
   $("brief").insertAdjacentHTML("afterbegin", html);
 }
 
-// The Overworld: drawn in the room scene once the hero has crossed (or seen from the abyss if it fell).
+// The Overworld: the last scene, drawn in the room above the brief. Its mood follows the Trial of Truth:
+// a bright day and a walk home to fireworks for a validated discovery; a dusk walk with a lantern for an honest,
+// qualified report; night over a sealed portal if the claim fell.
+const OW = { key: null, t0: 0, parts: [], last: 0, nextFw: 0 };
+
 function drawOverworld(ctx, f, s) {
-  const crossed = s.finale.overworld && s.finale.overworld.crossed;
-  rect(ctx, 0, 0, 320, 110, "#9ccaf2"); rect(ctx, 0, 70, 320, 40, "#c4e0f6");
-  disc(ctx, 262, 30, 12, "#ffe08a"); disc(ctx, 262, 30, 9, "#fff6d0");
-  for (let k = 0; k < 4; k++) { const cx = (k * 90 + f * 0.15) % 360 - 20; ellipse(ctx, cx, 22 + k * 9, 14, 4, "#ffffff"); }
-  ellipse(ctx, 70, 120, 120, 30, "#5fbf6a"); ellipse(ctx, 250, 124, 130, 32, "#4fae5a");
-  rect(ctx, 0, 124, 320, 56, "#3c8a46");
-  for (let k = 0; k < 12; k++) { const tx = 12 + k * 27, ty = 112 + (k % 3) * 6; rect(ctx, tx, ty, 3, 8, "#6a4a2a"); disc(ctx, tx + 1, ty - 3, 6, k % 2 ? "#2f7a3a" : "#3f8f45"); }
-  rect(ctx, 150, 130, 20, 50, "#d8c8a0"); rect(ctx, 152, 130, 16, 50, "#e8dcb8");  // the road home
-  rect(ctx, 136, 96, 48, 30, "#e6eff6"); rect(ctx, 132, 92, 56, 6, "#c0294a"); rect(ctx, 154, 110, 10, 16, "#7a5230");  // the academy
-  if (crossed) {
-    const img = pepSprite("Alchemist");
-    ctx.save(); ctx.translate(160, 150); ctx.scale(2, 2); blit(ctx, img, 0, 0); ctx.restore();
-    if (s.version === "V2") pixelText(ctx, "V2", 160, 104, "#1f8a8a");
-  } else {
-    ctx.save(); ctx.globalAlpha = 0.45; ctx.fillStyle = "#1a1230"; ctx.fillRect(0, 0, 320, 180); ctx.restore();
+  const now = performance.now();
+  if (OW.key !== s.finale) Object.assign(OW, { key: s.finale, t0: now, parts: [], nextFw: now + 2600 });
+  const dt = Math.min(0.05, OW.last ? (now - OW.last) / 1000 : 0.016);
+  OW.last = now;
+  const t = G.reduced ? 1e6 : now - OW.t0;
+  const o = s.finale.overworld || {}, outcome = (o.trial || {}).outcome;
+  const kind = !o.crossed ? "night" : outcome === "VALIDATED DISCOVERY" ? "day" : "dusk";
+  const P = {
+    day: { sky: ["#9ccaf2", "#a8d2f4", "#b6daf6", "#c4e0f6"], sun: ["#ffe08a", "#fff6d0"], hill1: "#5fbf6a", hill2: "#4fae5a", grass: "#3c8a46", tree: ["#2f7a3a", "#3f8f45"], road: ["#d8c8a0", "#e8dcb8"], wall: "#e6eff6", roof: "#c0294a" },
+    dusk: { sky: ["#3b2559", "#6b3f7a", "#b0587a", "#e88a6a"], sun: ["#ff9a5a", "#ffd08a"], hill1: "#4a5a6a", hill2: "#3e4c5e", grass: "#2e3c4a", tree: ["#22303e", "#283646"], road: ["#8a7a8a", "#9a8a98"], wall: "#b8b4c8", roof: "#7a2a4a" },
+    night: { sky: ["#07040e", "#0c0818", "#120c22", "#18102a"], sun: ["#cfd6e8", "#eef2ff"], hill1: "#141a2a", hill2: "#10162a", grass: "#0c1220", tree: ["#0a0e1a", "#0e1424"], road: ["#2a2a3a", "#323244"], wall: "#2a2e40", roof: "#2a1a2a" },
+  }[kind];
+  P.sky.forEach((c, i) => rect(ctx, 0, i * 28, 320, 28, c));
+  rect(ctx, 0, 112, 320, 8, P.sky[3]);
+  if (kind !== "day") for (let k = 0; k < (kind === "night" ? 50 : 18); k++) {
+    const tw = (k + Math.floor(f / 20)) % 7 ? 1 : 0.4;
+    ctx.globalAlpha = tw; rect(ctx, (k * 61) % 320, (k * 37) % (kind === "night" ? 100 : 50), 1, 1, "#e8e6f2"); ctx.globalAlpha = 1;
   }
+  // the sun (or the setting sun, or the moon)
+  const sunY = kind === "dusk" ? 92 + Math.min(10, t / 1500) : 30;
+  disc(ctx, 262, sunY, 12, P.sun[0]); disc(ctx, 262, sunY, 9, P.sun[1]);
+  if (kind === "night") disc(ctx, 266, 27, 9, P.sky[0]);   // a crescent
+  if (kind === "day") for (let k = 0; k < 4; k++) { const cx = (k * 90 + f * 0.15) % 360 - 20; ellipse(ctx, cx, 22 + k * 9, 14, 4, "#ffffff"); }
+  ellipse(ctx, 70, 120, 120, 30, P.hill1); ellipse(ctx, 250, 124, 130, 32, P.hill2);
+  rect(ctx, 0, 124, 320, 56, P.grass);
+  for (let k = 0; k < 12; k++) { const tx = 12 + k * 27, ty = 112 + (k % 3) * 6; rect(ctx, tx, ty, 3, 8, kind === "day" ? "#6a4a2a" : "#2a1e1a"); disc(ctx, tx + 1, ty - 3, 6, P.tree[k % 2]); }
+  rect(ctx, 150, 130, 20, 50, P.road[0]); rect(ctx, 152, 130, 16, 50, P.road[1]);   // the road home
+  rect(ctx, 136, 96, 48, 30, P.wall); rect(ctx, 132, 92, 56, 6, P.roof); rect(ctx, 154, 110, 10, 16, "#7a5230");   // the academy
+  if (kind !== "night") {   // its windows are lit; on a discovery a gold flag climbs the pole
+    const lit = kind === "dusk" ? "#ffd68c" : "#9ccaf2";
+    rect(ctx, 140, 102, 8, 7, lit); rect(ctx, 172, 102, 8, 7, lit);
+    if (kind === "dusk") { aura(ctx, 144, 105, 12, "255,214,140", 0.35); aura(ctx, 176, 105, 12, "255,214,140", 0.35); }
+  }
+  if (kind === "day") {
+    rect(ctx, 186, 66, 2, 30, "#5a4a3a");
+    const fy = Math.round(68 + 18 * (1 - ease.out(clamp01((t - 3600) / 1400))));
+    const wv = Math.floor(f / 8) % 2;
+    rect(ctx, 188, fy, 12, 7, "#e8b847"); rect(ctx, 200, fy + 1 + wv, 3, 5, "#e8b847"); rect(ctx, 190, fy + 2, 4, 3, "#fff3c4");
+  }
+  if (kind === "night") {   // the sealed portal, a grey ring in the dark where the road should begin
+    ctx.save(); ctx.strokeStyle = "#3a3848"; ctx.lineWidth = 2; ctx.beginPath(); ctx.ellipse(160, 160, 10, 16, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+  } else {
+    // the hero walks up the road from the portal at its foot to the academy door
+    const walk = clamp01((t - 300) / (kind === "day" ? 3200 : 4600)), e = ease.inOut(walk);
+    const portalA = 1 - clamp01((t - 2200) / 900);
+    if (portalA > 0) {
+      ctx.save(); ctx.globalAlpha = portalA; ctx.strokeStyle = kind === "day" ? "#e8b847" : "#cfe6ff"; ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.ellipse(160, 168, 12 * portalA + 2, 18 * portalA + 2, 0, 0, Math.PI * 2); ctx.stroke(); ctx.restore();
+      aura(ctx, 160, 168, 26, kind === "day" ? "255,224,138" : "190,220,255", 0.4 * portalA);
+    }
+    const hx = 160, hy = Math.round(176 - e * 48), sc = 2 - e * 0.8;
+    const bob = walk > 0 && walk < 1 && !G.reduced ? Math.floor(f / 7) % 2 : 0;
+    if (kind === "dusk") {
+      aura(ctx, hx + 7, hy - 12, 26, "255,214,140", 0.45);
+      rect(ctx, hx + 6, hy - 16 - bob, 4, 4, "#ffd68c"); rect(ctx, hx + 7, hy - 15 - bob, 2, 2, "#fff6d0");
+    }
+    const img = pepSprite("Alchemist");
+    ctx.save(); ctx.translate(hx, hy - bob); ctx.scale(sc, sc); blit(ctx, img, 0, 0); ctx.restore();
+    if (s.version === "V2") pixelText(ctx, "V2", hx, hy - img.height * sc - 8, kind === "day" ? "#1f8a8a" : "#7fe0ff");
+  }
+  // fireworks for a discovery, fireflies at dusk
+  if (!G.reduced) {
+    if (kind === "day" && t > 3600 && now > OW.nextFw && t < 16000) {
+      OW.nextFw = now + 700 + Math.random() * 600;
+      const fx = 70 + Math.random() * 180, fy = 24 + Math.random() * 36;
+      const col = [["#ffe08a", "#fff6d0"], ["#ff8ad8", "#ffd1f0"], ["#7fe0ff", "#d8f6ff"], ["#5fd67a", "#c8ffd4"]][Math.floor(Math.random() * 4)];
+      burst(OW.parts, fx, fy, 34, col, { speed: 55, gravity: 40, life: 1.3 });
+    }
+    if (kind === "dusk" && f % 18 === 0 && OW.parts.length < 24) {
+      burst(OW.parts, 20 + Math.random() * 280, 120 + Math.random() * 50, 1, ["#e8f070", "#c8e050"], { speed: 6, up: 6, gravity: -2, life: 3 });
+    }
+  }
+  stepParticles(ctx, OW.parts, dt);
+  if (kind === "night") { ctx.fillStyle = "rgba(7,4,14,0.25)"; ctx.fillRect(0, 0, 320, 180); }
 }
 
 bridgeLoop();

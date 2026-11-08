@@ -4,6 +4,7 @@
 
 const $ = (id) => document.getElementById(id);
 const ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
+const PACE = 1.45;   // every beat is held this much longer at 1x, so each ruling can be read and seen
 const FALLBACK_CAMPAIGNS = ["A", "B", "C", "D"];
 
 const G = {
@@ -16,12 +17,24 @@ const G = {
   filters: { agent: "", level: "", kind: "", text: "" },
   typer: null,
   seen: new Set(), interactive: false,   // ledger rows already applied; whether the Director's console is live
+  // motion only (never a ledger number): where each sprite is drawn, what each bar shows while it glides
+  pos: {}, hpShow: {}, hpTrail: {}, hitAt: {}, parts: [], wipe: null, shownLevel: 0,
+  enemyKey: null, enemyT0: 0, lastNow: 0, shakeT0: 0, shakeDur: 0, shakeAmp: 0, flashT0: 0, cheer: {}, recoilT0: 0,
+  cards: {},   // the party's DOM cards, kept between renders so bars and numbers can animate
 };
+
+function shakeStage(ms, amp) {
+  if (G.reduced) return;
+  G.shakeT0 = performance.now(); G.shakeDur = ms; G.shakeAmp = amp;
+}
 
 // ---------- title ----------
 
 async function boot() {
   $("motion").setAttribute("aria-pressed", String(G.reduced));
+  document.body.classList.toggle("reduced", G.reduced);
+  watchScreens();
+  revealScreen(700);
   titleLoop();
   try {
     const st = await fetch("/api/status").then((r) => (r.ok ? r.json() : Promise.reject()));
@@ -58,7 +71,10 @@ function renderCards() {
       <span class="card-meta">${esc(c.drug)} vs ${esc((c.comparator || "").replace(/ \(active comparator\)/, ""))} <em>SIMULATED</em></span>
     </button>`).join("");
   for (const b of document.querySelectorAll(".card")) {
-    b.onclick = () => { G.pick = b.dataset.letter; renderCards(); };
+    b.onclick = () => {
+      G.pick = b.dataset.letter;
+      for (const o of document.querySelectorAll(".card")) o.setAttribute("aria-checked", String(o === b));
+    };
   }
 }
 
@@ -77,7 +93,9 @@ async function startGame(mode) {
   G.token += 1;
   const token = G.token;
   Object.assign(G, { mode, state: initial(), pending: [], done: false, running: true, hold: false, pinned: null,
-                     fx: [], questId: null, nextAt: 0, seen: new Set(), interactive: false });
+                     fx: [], questId: null, nextAt: 0, seen: new Set(), interactive: false,
+                     pos: {}, hpShow: {}, hpTrail: {}, hitAt: {}, parts: [], wipe: null, shownLevel: 0, enemyKey: null, cheer: {} });
+  $("party").innerHTML = ""; G.cards = {}; G.nodesHTML = "";
   $("screen-title").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-game").hidden = false;
   $("ledger").tBodies[0].innerHTML = ""; $("f-agent").innerHTML = '<option value="">Everyone</option>';
   G.bubbleUntil = 0; $("gate-bubble").hidden = true;
@@ -153,19 +171,42 @@ function onEvent(e) {
   if (e.action === "quest_start") fillAgentFilter();
   if (e.action === "recruit") fillAgentFilter();
   if (e.line) ticker(e.line, e.explain || "");
-  if (e.action === "level_start") banner(`Level ${ROMAN[e.level]}: ${e.result.name}`, e.result.trap);
-  if (e.action === "encounter" && e.result.boss) banner(e.result.enemy.name, "BOSS");
+  if (e.action === "level_start") {
+    if (G.shownLevel && e.level !== G.shownLevel && !G.reduced) {
+      G.wipe = { t0: performance.now(), from: G.shownLevel, to: e.level, dur: 900 / Math.sqrt(G.speed) };
+    } else G.shownLevel = e.level;
+    banner(`Level ${ROMAN[e.level]}: ${e.result.name}`, e.result.trap);
+  }
+  if (e.action === "encounter" && e.result.boss) { banner(e.result.enemy.name, "BOSS"); shakeStage(420, 2); }
   if (e.action === "result" || e.action === "mystery_result") {
     if (!G.pinned) inspect(e);
-    const d = e.hp_delta || 0;
-    if (d) G.fx.push({ id: e.agent_id, text: d > 0 ? `+${d}` : `${d}`, color: d > 0 ? "#5fd67a" : "#ff4a5a", t0: performance.now() });
-    else if (e.passed) G.fx.push({ id: e.agent_id, text: "0", color: "#7fe0ff", t0: performance.now() });
-    if (d < 0 && !G.reduced) G.shake = performance.now() + 220;
-    G.lunge = { id: e.agent_id, t0: performance.now(), hit: d < 0 };
+    const d = e.hp_delta || 0, id = e.agent_id;
+    // the scroll only becomes the fighter on this row, so it is still flying out: the result lands when it arrives
+    const p0 = G.pos[id], far = p0 && Math.hypot(p0.x - FRONT[0], p0.y - FRONT[1]) > 4;
+    const lag = G.reduced || !far || e.action !== "result" ? 0 : 760 / Math.sqrt(G.speed);
+    const t0 = performance.now() + lag;
+    if (d) G.fx.push({ id, text: d > 0 ? `+${d}` : `${d}`, color: d > 0 ? "#5fd67a" : "#ff4a5a", t0 });
+    else if (e.passed) G.fx.push({ id, text: "0", color: "#7fe0ff", t0 });
+    G.lunge = { id, t0, hit: d < 0 };
+    if (d < 0) G.hitAt[id] = t0;
+    if (e.passed && d >= 0 && !(e.result && e.result.scout)) { G.cheer[id] = t0; G.recoilT0 = t0; }
+    setTimeout(() => {
+      if (d < 0) shakeStage(260, Math.min(3, 1 + -d / 12));
+      const at = G.pos[id];
+      if (!at || G.reduced) return;
+      if (d < 0) burst(G.parts, at.x, at.y - 14, Math.min(26, 8 - d), ["#ff4a5a", "#ffd1d8", "#f3e9d2"], { speed: 70, life: 0.5 });
+      else if (d > 0) burst(G.parts, at.x, at.y - 8, 14, ["#5fd67a", "#b6ffc4"], { speed: 22, up: 40, gravity: -30, life: 0.9 });
+      else if (e.passed) burst(G.parts, at.x, at.y - 14, 8, ["#7fe0ff", "#ffffff"], { speed: 40, life: 0.4 });
+    }, lag);
   }
   if (e.action === "shatter") {
     banner(`${s.agents[e.agent_id]?.name || "A scroll"} shatters`, "0 HP: research integrity gone");
-    if (!G.reduced) G.shake = performance.now() + 380;
+    shakeStage(480, 4);
+    const at = G.pos[e.agent_id];
+    if (at && !G.reduced) {
+      G.flashT0 = performance.now();
+      burst(G.parts, at.x, at.y - 12, 40, ["#9a96a8", "#6a6880", "#3a3848", "#f3e9d2"], { speed: 55, up: 30, gravity: 90, life: 1.2 });
+    }
   }
   if (e.action === "gatekeeper" || e.action === "benchmark") speak(e.result.text, e.action === "benchmark");
   if (e.action === "level_complete") {
@@ -184,7 +225,7 @@ function step(now) {
   if (now < G.nextAt) return;
   const e = G.pending.shift();
   apply(e);
-  G.nextAt = now + beat(e) / G.speed * (G.reduced ? 0.8 : 1);
+  G.nextAt = now + beat(e) * PACE / G.speed * (G.reduced ? 0.8 : 1);
 }
 
 function stepOnce() {
@@ -251,11 +292,23 @@ function aura(ctx, x, y, r, rgb, k) {
 
 function drawStage(ctx, now) {
   const s = G.state;
-  const level = Math.min(4, Math.max(1, s.level || 1));
+  const dt = Math.min(0.05, G.lastNow ? (now - G.lastNow) / 1000 : 0.016);
+  G.lastNow = now;
+  // a dungeon change plays the dissolve: close on the old level, open on the new one
+  let level = Math.min(4, Math.max(1, s.level || 1)), wipeP = 0;
+  if (G.wipe) {
+    const t = (now - G.wipe.t0) / G.wipe.dur;
+    if (t >= 1) { G.shownLevel = G.wipe.to; G.wipe = null; }
+    else { level = t < 0.5 ? G.wipe.from : G.wipe.to; wipeP = t < 0.5 ? ease.inOut(t * 2) : 1 - ease.inOut((t - 0.5) * 2); }
+  }
   const f = G.reduced ? 0 : G.f;
   ctx.save();
   ctx.clearRect(0, 0, 320, 180);
-  if (G.shake > now) ctx.translate(Math.round(Math.random() * 4 - 2), Math.round(Math.random() * 2 - 1));
+  const sk = now - G.shakeT0;
+  if (sk < G.shakeDur) {
+    const k = G.shakeAmp * (1 - sk / G.shakeDur);
+    ctx.translate(Math.round(Math.sin(sk / 22) * k), Math.round(Math.cos(sk / 31) * k * 0.5));
+  }
   ctx.drawImage(bakeLevel(level), -20, 0);
   ctx.save(); ctx.translate(-20, 0); drawLevelFx(ctx, level, f); ctx.restore();
   if (s.secret && typeof drawSecretFx === "function") drawSecretFx(ctx, f);
@@ -267,27 +320,44 @@ function drawStage(ctx, now) {
   }
   // the enemy
   if (s.enemy && s.enemy.key) {
-    aura(ctx, 252, 132, 70, "255,230,180", 0.34);  // a pool of light so dark foes read
-    const L = G.lunge && now - G.lunge.t0 < 500 ? G.lunge : null;
-    const ex = 252 - (L && L.hit && !G.reduced ? Math.sin((now - L.t0) / 500 * Math.PI) * 30 : 0);
+    if (s.enemy.key !== G.enemyKey) { G.enemyKey = s.enemy.key; G.enemyT0 = now; }
+    const enter = G.reduced ? 1 : ease.out(clamp01((now - G.enemyT0) / 480));   // each foe slides in out of the dark
+    aura(ctx, 252, 132, 70, "255,230,180", 0.34 * enter);  // a pool of light so dark foes read
+    const L = G.lunge && now >= G.lunge.t0 && now - G.lunge.t0 < 500 ? G.lunge : null;
+    const rc = now - G.recoilT0, recoil = rc >= 0 && rc < 520 && !G.reduced ? Math.sin(rc / 520 * Math.PI) * 16 : 0;   // knocked back by a pass
+    const ex = 252 + (1 - enter) * 80 + recoil - (L && L.hit && !G.reduced ? Math.sin((now - L.t0) / 500 * Math.PI) * 30 : 0);
+    ctx.save(); ctx.globalAlpha = enter * (rc >= 0 && rc < 300 && !G.reduced && Math.floor(rc / 60) % 2 ? 0.55 : 1);
     if (BOSSES[s.enemy.key]) drawBossOutlined(ctx, s.enemy.key, Math.round(ex), 162, f, 2);
-    else { ctx.save(); ctx.translate(Math.round(ex), 162); ctx.scale(3, 3); drawEnemy(ctx, s.enemy.key, 0, 0, f, false); ctx.restore(); }
-  }
+    else { ctx.translate(Math.round(ex), 162); ctx.scale(3, 3); drawEnemy(ctx, s.enemy.key, 0, 0, f, false); }
+    ctx.restore();
+  } else G.enemyKey = null;
   // the Alchemist
   const hero = pepSprite("Alchemist");
   const hb = G.reduced ? 0 : Math.round(Math.sin(G.f / 16) * 0.6);
   ctx.save(); ctx.translate(HERO[0], HERO[1] + hb); ctx.scale(3, 3); blit(ctx, hero, 0, 0); ctx.restore();
   // a thread of light from the flask to the scroll under test
   const fid = s.fighter && s.enemy && s.agents[s.fighter] && s.agents[s.fighter].status === "active" ? s.fighter : null;
-  if (fid) for (let k = 1; k < 12; k++) {
+  const fp = fid && G.pos[fid];
+  if (fp) for (let k = 1; k < 12; k++) {
     if ((k + Math.floor(f / 4)) % 3) continue;
-    const t = k / 12, x = HERO[0] + 16 + (FRONT[0] - HERO[0] - 16) * t, y = HERO[1] - 22 + (FRONT[1] - 12 - HERO[1] + 22) * t;
+    const t = k / 12, x = HERO[0] + 16 + (fp.x - HERO[0] - 16) * t, y = HERO[1] - 22 + (fp.y - 12 - HERO[1] + 22) * t;
     rect(ctx, x, y, 1, 1, "#7fe0ff");
   }
   // the three scrolls
   s.order.forEach((id, i) => {
     const a = s.agents[id];
-    const [x, fy0] = scrollAt(s, id);
+    const [tx, ty] = scrollAt(s, id);
+    // scrolls travel on an arc: a short lift out to the front, a higher hop back home
+    const p = G.pos[id] || (G.pos[id] = { x: tx, y: ty, fx: tx, fy: ty, tx, ty, t0: 0, dur: 0, arc: 0 });
+    if (p.tx !== tx || p.ty !== ty) {
+      Object.assign(p, { fx: p.x, fy: p.y, tx, ty, t0: now, dur: G.reduced ? 0 : 760 / Math.sqrt(G.speed), arc: tx < p.x ? 20 : 10 });
+    }
+    const k = p.dur ? clamp01((now - p.t0) / p.dur) : 1, e2 = ease.inOut(k);
+    p.x = p.fx + (p.tx - p.fx) * e2; p.y = p.fy + (p.ty - p.fy) * e2 - Math.sin(Math.PI * k) * p.arc;
+    const ch = G.reduced ? 1e9 : now - (G.cheer[id] || -1e9);          // the victory hop after a pass
+    const hk = G.reduced ? 1e9 : now - (G.hitAt[id] || -1e9);          // knocked back by a hit
+    const x = Math.round(p.x - (hk >= 0 && hk < 320 ? Math.sin(hk / 320 * Math.PI) * 9 : 0));
+    const fy0 = Math.round(p.y - (ch >= 0 && ch < 820 ? Math.abs(Math.sin(ch / 820 * 2 * Math.PI)) * 8 : 0));
     if (a.status !== "active") {
       ctx.save(); ctx.translate(x, fy0 + 4); ctx.scale(2, 2); drawAsh(ctx, 0, 0); ctx.restore();
       return;
@@ -297,30 +367,61 @@ function drawStage(ctx, now) {
     const fighting = id === fid;
     if (fighting) aura(ctx, x, fy - 12, 26, "255,224,138", 0.5 + (G.reduced ? 0 : 0.15 * Math.sin(G.f / 6)));
     else if (s.active === id) aura(ctx, x, fy - 12, 18, "255,224,138", 0.28);
-    const L = G.lunge && G.lunge.id === id && now - G.lunge.t0 < 400 ? G.lunge : null;
+    const L = G.lunge && G.lunge.id === id && now >= G.lunge.t0 && now - G.lunge.t0 < 400 ? G.lunge : null;
     const flash = L && L.hit && !G.reduced && (now - L.t0) % 120 < 60;
     ctx.save(); ctx.translate(x, fy); ctx.scale(2, 2);
     blit(ctx, flash ? flashOf(`scroll:${a.archetype}`, img) : img, 0, 0);
     ctx.restore();
-    // floating HP bar, credit pips and buff dots
+    // floating HP bar (it drains, with a pale trail of the HP just lost), credit pips and buff dots
+    const hp = Math.max(0, a.hp);
+    const goal = now < (G.hitAt[id] || 0) ? G.hpShow[id] : hp;   // the bar holds until the blow lands
+    const show = G.hpShow[id] = G.reduced || G.hpShow[id] == null ? hp : approach(G.hpShow[id], goal, dt, 7);
+    let trail = G.hpTrail[id] ?? hp;
+    if (trail < show || G.reduced) trail = show;
+    else if (now - (G.hitAt[id] || 0) > 420) trail = Math.max(show, trail - dt * 45);
+    G.hpTrail[id] = trail;
     const top = fy - img.height * 2 - 6;
     rect(ctx, x - 13, top, 26, 4, "#0d0b1e");
-    const w = Math.round(24 * Math.max(0, a.hp) / 100);
-    rect(ctx, x - 12, top + 1, w, 2, a.hp > 50 ? "#5fd67a" : a.hp > 25 ? "#e8b847" : "#ff4a5a");
-    pixelText(ctx, String(a.hp), x, top - 7, "#f3e9d2");
+    const w = Math.round(24 * show / 100), wt = Math.round(24 * trail / 100);
+    if (wt > w) rect(ctx, x - 12 + w, top + 1, wt - w, 2, "#ffd1d8");
+    rect(ctx, x - 12, top + 1, w, 2, show > 50 ? "#5fd67a" : show > 25 ? "#e8b847" : "#ff4a5a");
+    pixelText(ctx, String(Math.round(show)), x, top - 7, "#f3e9d2");
+    if (ch >= 0 && ch < 1100) {   // a gold ring opens around the scroll and a check mark rises over it
+      const t = ch / 1100, r = 6 + ease.out(t) * 22;
+      ctx.globalAlpha = 1 - t;
+      for (let q = 0; q < 14; q++) {
+        const a = q / 14 * Math.PI * 2 + t;
+        rect(ctx, x + Math.cos(a) * r, fy - 12 + Math.sin(a) * r * 0.7, q % 2 ? 1 : 2, q % 2 ? 1 : 2, q % 3 ? "#ffe08a" : "#ffffff");
+      }
+      const cy = top - 20 - Math.round(ease.out(t) * 8), pts = [[-3, 0], [-2, 1], [-1, 2], [0, 1], [1, 0], [2, -1], [3, -2]];
+      for (const [dx, dy] of pts) rect(ctx, x + dx * 2 - 1, cy + dy * 2 - 1, 4, 4, "#0d0b1e");   // outline
+      for (const [dx, dy] of pts) rect(ctx, x + dx * 2, cy + dy * 2, 2, 2, "#5fd67a");
+      ctx.globalAlpha = 1;
+    }
     const c = Math.round(a.credits / 20);
     for (let k = 0; k < c; k++) rect(ctx, x - 12 + k * 4, top + 5, 3, 2, "#e8b847");
     a.buffs.slice(0, 6).forEach((_, k) => rect(ctx, x + 11, top + 9 + k * 4, 3, 3, "#7fe0ff"));
   });
   // floating damage numbers
+  // floating damage numbers: they pop at double size, settle, rise and fade
   G.fx = G.fx.filter((p) => now - p.t0 < 1100);
   for (const p of G.fx) {
-    if (!s.agents[p.id]) continue;
-    const [fx, fy] = scrollAt(s, p.id);
-    const rise = G.reduced ? 0 : (now - p.t0) / 1100 * 14;
-    pixelText(ctx, p.text, fx + 18, fy - 34 - rise, p.color);
+    if (!s.agents[p.id] || now < p.t0) continue;
+    const at = G.pos[p.id] || { x: scrollAt(s, p.id)[0], y: scrollAt(s, p.id)[1] };
+    const t = (now - p.t0) / 1100;
+    const rise = G.reduced ? 0 : ease.out(t) * 16;
+    const big = !G.reduced && t < 0.14;
+    ctx.save();
+    ctx.globalAlpha = t > 0.65 ? 1 - (t - 0.65) / 0.35 : 1;
+    const nx = Math.round(at.x + 18), ny = Math.round(at.y - 34 - rise);
+    if (big) { ctx.translate(nx, ny); ctx.scale(2, 2); pixelText(ctx, p.text, 0, -2, p.color); }
+    else pixelText(ctx, p.text, nx, ny, p.color);
+    ctx.restore();
   }
+  stepParticles(ctx, G.parts, dt);
+  if (now - G.flashT0 < 90) { ctx.fillStyle = "rgba(255,255,255,0.35)"; ctx.fillRect(-4, -4, 328, 188); }
   ctx.restore();
+  drawDissolve(ctx, 320, 180, wipeP, 10, "#0d0b1e");
 }
 
 // The Gatekeeper's speech bubble over the stage.
@@ -328,9 +429,9 @@ function speak(text, benchmark) {
   const b = $("gate-bubble");
   b.innerHTML = `<small>${benchmark ? "The Gatekeeper sets the benchmark" : "Warden of the Null, the Gatekeeper Skeptic"}</small>${esc(text)}`;
   b.hidden = false;
-  G.bubbleUntil = performance.now() + 3200 / G.speed;
+  G.bubbleUntil = performance.now() + 4400 / G.speed;
   clearTimeout(b._t);
-  b._t = setTimeout(() => { b.hidden = true; renderEnemy(); }, 3200 / G.speed);
+  b._t = setTimeout(() => { b.hidden = true; renderEnemy(); }, 4400 / G.speed);
 }
 
 // ---------- HTML around the stage ----------
@@ -341,9 +442,12 @@ function renderAll() {
 }
 
 function renderNodes() {
-  $("nodes").innerHTML = nodeStates(G.state).map((n) =>
+  const html = nodeStates(G.state).map((n) =>
     `<li class="${n.done ? "done" : ""} ${n.current ? "current" : ""}" title="${esc(n.name)}"><b>${n.numeral}</b><span>${esc(n.name)}</span></li>`)
     .join('<li class="arrow" aria-hidden="true">→</li>');
+  if (html === G.nodesHTML) return;   // only redraw on a real change, so the new current node animates once
+  G.nodesHTML = html;
+  $("nodes").innerHTML = html;
 }
 
 const portraitCache = {};
@@ -358,27 +462,56 @@ function portrait(key) {  // "hero", "gatekeeper", or a scroll archetype
 }
 
 function renderParty() {
-  const s = G.state;
+  const s = G.state, list = $("party");
   const standing = s.order.filter((id) => s.agents[id].status === "active").length;
-  const hero = s.hero ? `<li class="pcard hero-card">
-      <img src="${portrait("hero")}" alt="" width="48" height="48">
+  if (s.hero) {
+    let li = G.cards.hero;
+    if (!li) {
+      li = G.cards.hero = document.createElement("li");
+      li.className = "pcard hero-card";
+      list.prepend(li);
+    }
+    const html = `<img src="${portrait("hero")}" alt="" width="48" height="48">
       <div class="pinfo"><strong>${esc(s.hero.short || s.hero.name)}</strong> <small>the hero</small>
         <div class="meta"><span>${standing} of ${s.order.length} scrolls intact</span></div>
-        <div class="buffs"><span>chooses abilities, never numbers</span></div></div></li>` : "";
-  $("party").innerHTML = hero + s.order.map((id) => {
+        <div class="buffs"><span>chooses abilities, never numbers</span></div></div>`;
+    if (li._html !== html) { li.innerHTML = html; li._html = html; }
+  }
+  // each scroll keeps its card, so its HP bar drains, its number counts down and a hit shakes it
+  for (const id of s.order) {
     const a = s.agents[id];
+    let li = G.cards[id];
+    if (!li) {
+      li = G.cards[id] = document.createElement("li");
+      li.innerHTML = `<img src="${portrait(a.archetype)}" alt="" width="48" height="48">
+        <div class="pinfo"><strong></strong> <small></small>
+          <div class="hp"><b class="trail"></b><i></i><span data-v="${a.hp}">${a.hp} HP</span></div>
+          <div class="meta"></div><div class="buffs"></div></div>`;
+      li._buffs = [];
+      list.appendChild(li);
+    }
     const st = a.status !== "active" ? "fallen" : (s.fighter === id && s.enemy ? "fighting" : "");
+    li.className = `pcard ${st} a-${a.archetype}`;
+    li.title = a.claim;
+    li.querySelector("strong").textContent = a.name.replace(/^The /, "");
+    li.querySelector("small").textContent = a.title;
+    const hp = Math.max(0, a.hp), span = li.querySelector(".hp span"), prev = Number(span.dataset.v);
+    li.querySelector(".hp i").style.width = `${hp}%`;
+    li.querySelector(".hp .trail").style.width = `${hp}%`;
+    if (hp < prev) pulse(li, "hurt"); else if (hp > prev) pulse(li, "healed");
+    tweenNumber(span, a.hp, G.reduced ? 0 : 500, " HP");
     const cast = a.abilities[s.level] || [];
-    return `<li class="pcard ${st} a-${a.archetype}" title="${esc(a.claim)}">
-      <img src="${portrait(a.archetype)}" alt="" width="48" height="48">
-      <div class="pinfo"><strong>${esc(a.name.replace(/^The /, ""))}</strong> <small>${esc(a.title)}</small>
-        <div class="hp"><i style="width:${Math.max(0, a.hp)}%"></i><span>${a.hp} HP</span></div>
-        <div class="meta"><span title="Research credits left">◆ ${a.credits}</span>
-          ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}
-          ${cast.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join("")}</div>
-        <div class="buffs">${a.buffs.map((b) => `<span>${esc(b)}</span>`).join("")}</div>
-      </div></li>`;
-  }).join("");
+    const meta = `<span title="Research credits left">◆ ${a.credits}</span>
+      ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}
+      ${cast.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join("")}`;
+    const m = li.querySelector(".meta");
+    if (m._html !== meta) { m.innerHTML = meta; m._html = meta; }
+    if (a.buffs.join("|") !== li._buffs.join("|")) {
+      const fresh = new Set(a.buffs.filter((b) => !li._buffs.includes(b)));
+      li.querySelector(".buffs").innerHTML = a.buffs.map((b) => `<span class="${fresh.has(b) ? "fresh" : ""}">${esc(b)}</span>`).join("");
+      li._buffs = [...a.buffs];
+    }
+  }
 }
 
 // Top-left HUD: the scroll the Alchemist is holding up right now.
@@ -387,10 +520,19 @@ function renderHud() {
   const hud = $("hud");
   if (!a) { hud.hidden = true; return; }
   hud.hidden = false;
-  hud.className = `hud a-${a.archetype} ${a.status !== "active" ? "fallen" : ""}`;
-  hud.innerHTML = `<img src="${portrait(a.archetype)}" alt="" width="30" height="30"><div><strong>${esc(a.name)}</strong>
-    <div class="hp"><i style="width:${Math.max(0, a.hp)}%"></i><span>${a.hp} HP</span></div>
-    <small>◆ ${a.credits} · ${a.design === "new_user" || a.buffs.includes("TIME-ZERO ALIGNED") ? "time-zero aligned" : "as carried"}</small></div>`;
+  const swap = hud._id !== a.id;
+  if (swap) {   // a new scroll steps up: rebuild and slide it in, without animating the bar from the last one
+    hud._id = a.id;
+    hud.innerHTML = `<img alt="" width="30" height="30"><div><strong></strong>
+      <div class="hp"><b class="trail"></b><i></i><span data-v="${a.hp}"></span></div><small></small></div>`;
+    pulse(hud, "enter");
+  }
+  hud.className = `hud a-${a.archetype} ${a.status !== "active" ? "fallen" : ""} ${hud.classList.contains("enter") ? "enter" : ""}`;
+  hud.querySelector("img").src = portrait(a.archetype);
+  hud.querySelector("strong").textContent = a.name;
+  for (const bar of hud.querySelectorAll(".hp i, .hp .trail")) bar.style.width = `${Math.max(0, a.hp)}%`;
+  tweenNumber(hud.querySelector(".hp span"), a.hp, swap || G.reduced ? 0 : 500, " HP");
+  hud.querySelector("small").textContent = `◆ ${a.credits} · ${a.design === "new_user" || a.buffs.includes("TIME-ZERO ALIGNED") ? "time-zero aligned" : "as carried"}`;
 }
 
 function abilityName(k) { return (G.state.rules && G.state.rules.abilities[k] && G.state.rules.abilities[k].name) || k; }
@@ -398,16 +540,21 @@ function abilityName(k) { return (G.state.rules && G.state.rules.abilities[k] &&
 function renderEnemy() {
   const e = G.state.enemy, plate = $("enemy-plate");
   if (!e || !e.key || performance.now() < G.bubbleUntil) { plate.hidden = true; return; }
+  const html = `<strong>${esc(e.name)}</strong>${e.boss ? ' <em>BOSS</em>' : ""}<small>${esc(e.test || "")}</small>`;
+  const fresh = plate.hidden || plate._html !== html;
   plate.hidden = false;
-  plate.innerHTML = `<strong>${esc(e.name)}</strong>${e.boss ? ' <em>BOSS</em>' : ""}<small>${esc(e.test || "")}</small>`;
+  if (fresh) { plate.innerHTML = html; plate._html = html; pulse(plate, "enter"); }
 }
 
 function banner(title, sub) {
   const b = $("banner");
   b.innerHTML = `<strong>${esc(title)}</strong>${sub ? `<small>${esc(sub)}</small>` : ""}`;
   b.hidden = false;
-  clearTimeout(b._t);
-  b._t = setTimeout(() => { b.hidden = true; }, 1800 / G.speed);
+  b.classList.remove("out");
+  pulse(b, "in");
+  clearTimeout(b._t); clearTimeout(b._t2);
+  b._t = setTimeout(() => { b.classList.add("out"); b._t2 = setTimeout(() => { b.hidden = true; b.classList.remove("out"); }, 240); },
+                    2600 / G.speed);
 }
 
 function ticker(line, explain) {
@@ -418,7 +565,7 @@ function ticker(line, explain) {
   let i = 0;
   el.textContent = "";
   G.typer = setInterval(() => {
-    i += 2 * G.speed;
+    i += 1.3 * G.speed;
     el.textContent = line.slice(0, i);
     if (i >= line.length) clearInterval(G.typer);
   }, 16);
@@ -476,6 +623,7 @@ function inspect(e) {
     }
   }
   $("insp-body").innerHTML = html;
+  pulse($("insp-body"), "swap");
   const un = $("unpin");
   if (un) un.onclick = () => { G.pinned = null; const last = [...s.events].reverse().find((x) => x.action === "result"); if (last) inspect(last); };
 }
@@ -498,7 +646,9 @@ function rowHTML(e) {
 
 function appendLedger(e) {
   if (!filterEvents([e], G.filters).length) return;
-  $("ledger").tBodies[0].insertAdjacentHTML("afterbegin", rowHTML(e));
+  const body = $("ledger").tBodies[0];
+  body.insertAdjacentHTML("afterbegin", rowHTML(e));
+  if (!G.reduced) pulse(body.firstElementChild, "new");
 }
 
 function rebuildLedger() {
@@ -529,7 +679,7 @@ function showLevelDone(r) {
     <div class="dlg-buttons"><button class="btn gold" id="ld-go">Continue <span id="ld-count"></span></button></div>`;
   dlg.showModal();
   $("ld-go").onclick = closeLevelDone;
-  let n = Math.ceil(6 / G.speed);
+  let n = Math.ceil(8 / G.speed);
   const tick = () => {
     if (!dlg.open) return;
     if (!G.running) { $("ld-count").textContent = ""; dlg._t = setTimeout(tick, 500); return; }
@@ -628,7 +778,11 @@ function wire() {
   $("skip").onclick = skipLevel;
   $("exit").onclick = exitGame;
   $("tutorial-btn").onclick = () => maybeTutorial(true);
-  $("motion").onclick = () => { G.reduced = !G.reduced; $("motion").setAttribute("aria-pressed", String(G.reduced)); };
+  $("motion").onclick = () => {
+    G.reduced = !G.reduced;
+    $("motion").setAttribute("aria-pressed", String(G.reduced));
+    document.body.classList.toggle("reduced", G.reduced);
+  };
   const refilter = () => {
     G.filters = { agent: $("f-agent").value, level: $("f-level").value, kind: $("f-kind").value, text: $("f-text").value };
     rebuildLedger();

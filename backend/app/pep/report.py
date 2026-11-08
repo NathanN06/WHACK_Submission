@@ -185,8 +185,9 @@ def decision_brief(q, champion, rows) -> dict:
         ]
         uncertainty = (f"The rate ratio used was {rr:.2f}, from one simulated network. Unmeasured confounding cannot be "
                        f"ruled out, and {'no' if m3['n_rct'] == 0 else m3['n_rct']} completed human RCT"
-                       f"{'' if m3['n_rct'] == 1 else 's'} back{'s' if m3['n_rct'] == 1 else ''} it. "
-                       "A second vaulted partition is kept untouched for a later validation run.")
+                       f"{'' if m3['n_rct'] == 1 else 's'} back{'s' if m3['n_rct'] == 1 else ''} it. "+
+                       ("The second vaulted partition was opened once, by the Trial of Truth." if getattr(q, "vault_opened", None)
+                          else "A second vaulted partition is kept untouched for a later validation run."))
     else:
         best = max((r for r in rows if r["skill"] and r["status"] == "active"),
                    key=lambda r: r["skill"]["ss_oos"] if r["skill"]["ss_oos"] is not None else -9, default=None)

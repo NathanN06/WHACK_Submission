@@ -15,6 +15,7 @@ const G = {
   f: 0, fx: [], shake: 0, lunge: null, pinned: null, bubbleUntil: 0,
   filters: { agent: "", level: "", kind: "", text: "" },
   typer: null,
+  seen: new Set(), interactive: false,   // ledger rows already applied; whether the Director's console is live
 };
 
 // ---------- title ----------
@@ -76,8 +77,8 @@ async function startGame(mode) {
   G.token += 1;
   const token = G.token;
   Object.assign(G, { mode, state: initial(), pending: [], done: false, running: true, hold: false, pinned: null,
-                     fx: [], questId: null, nextAt: 0 });
-  $("screen-title").hidden = true; $("screen-room").hidden = true; $("screen-game").hidden = false;
+                     fx: [], questId: null, nextAt: 0, seen: new Set(), interactive: false });
+  $("screen-title").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-game").hidden = false;
   $("ledger").tBodies[0].innerHTML = ""; $("f-agent").innerHTML = '<option value="">Everyone</option>';
   G.bubbleUntil = 0; $("gate-bubble").hidden = true;
   setRun(true); renderAll();
@@ -85,9 +86,10 @@ async function startGame(mode) {
   if (mode === "live" && G.server) {
     try {
       const res = await fetch("/api/quests", { method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ campaign: G.pick, llm: G.claude && $("llm").checked }) });
+        body: JSON.stringify({ campaign: G.pick, llm: G.claude && $("llm").checked, interactive: true }) });
       if (!res.ok) throw new Error(await res.text());
       G.questId = (await res.json()).quest_id;
+      G.interactive = true;
       pollLive(token, 0);
     } catch (err) {
       ticker("Could not start a live campaign, so the recorded run plays instead.", String(err).slice(0, 160));
@@ -124,7 +126,7 @@ function exitGame() {
   }
   G.token += 1; clearTimeout(G.poll);
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
-  $("screen-game").hidden = true; $("screen-room").hidden = true; $("screen-title").hidden = false;
+  $("screen-game").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-title").hidden = false;
   history.replaceState(null, "", location.pathname);
 }
 
@@ -138,6 +140,8 @@ function setRun(on) {
 }
 
 function apply(e, quiet = false) {
+  if (G.seen.has(e.seq)) return;   // the console's own rows can arrive twice: in its reply and from the poll
+  G.seen.add(e.seq);
   reduce(G.state, e);
   appendLedger(e);
   if (quiet) return;
@@ -151,7 +155,7 @@ function onEvent(e) {
   if (e.line) ticker(e.line, e.explain || "");
   if (e.action === "level_start") banner(`Level ${ROMAN[e.level]}: ${e.result.name}`, e.result.trap);
   if (e.action === "encounter" && e.result.boss) banner(e.result.enemy.name, "BOSS");
-  if (e.action === "result") {
+  if (e.action === "result" || e.action === "mystery_result") {
     if (!G.pinned) inspect(e);
     const d = e.hp_delta || 0;
     if (d) G.fx.push({ id: e.agent_id, text: d > 0 ? `+${d}` : `${d}`, color: d > 0 ? "#5fd67a" : "#ff4a5a", t0: performance.now() });
@@ -164,8 +168,13 @@ function onEvent(e) {
     if (!G.reduced) G.shake = performance.now() + 380;
   }
   if (e.action === "gatekeeper" || e.action === "benchmark") speak(e.result.text, e.action === "benchmark");
-  if (e.action === "level_complete") showLevelDone(e.result);
-  if (e.action === "finale") finaleReached();
+  if (e.action === "level_complete") {
+    showLevelDone(e.result);
+    if (G.interactive) directorPost("advance", { level: e.result.level }).catch(() => {});  // the quest may compute the next level
+  }
+  if (typeof directorEvent === "function") directorEvent(e);
+  if (typeof bridgeEvent === "function") bridgeEvent(e);
+  if (e.action === "finale" && $("screen-bridge").hidden) finaleReached();
   if (e.action === "stopped" || e.action === "error") ticker(e.line, "");
   renderAll();
 }
@@ -249,6 +258,7 @@ function drawStage(ctx, now) {
   if (G.shake > now) ctx.translate(Math.round(Math.random() * 4 - 2), Math.round(Math.random() * 2 - 1));
   ctx.drawImage(bakeLevel(level), -20, 0);
   ctx.save(); ctx.translate(-20, 0); drawLevelFx(ctx, level, f); ctx.restore();
+  if (s.secret && typeof drawSecretFx === "function") drawSecretFx(ctx, f);
   // the Gatekeeper Skeptic, once it has spoken this level
   if (s.gate) {
     if (s.benchmark && level === 4) aura(ctx, GATE[0], GATE[1] - 16, 34, "127,224,255", 0.22);
@@ -450,8 +460,15 @@ function inspect(e) {
         <details><summary>Telemetry record (PepEncounterTelemetry)</summary><pre>${esc(JSON.stringify(tele, null, 2))}</pre></details>`;
     }
   } else {
-    html += `<div class="insp-head"><strong>${esc(e.action.replace(/_/g, " "))}</strong>${a ? ` · ${esc(a.name)}` : ""}</div>
+    const r = e.result || {};
+    html += `<div class="insp-head"><strong>${esc(e.action.replace(/_/g, " "))}</strong>${a ? ` · ${esc(a.name)}` : ""}
+      ${e.encounter && e.encounter.mysteryId ? `<span class="tag">Mystery ${esc(e.encounter.mysteryId)}</span>` : ""}</div>
       <p>${esc(e.line || "")}</p>${e.explain ? `<p class="muted">${esc(e.explain)}</p>` : ""}`;
+    if (r.formula) html += `<dl class="insp"><dt>Rule</dt><dd><code>${esc(r.formula)}</code></dd></dl>`;
+    if (r.chart) html += chartHTML(r.chart);
+    const nums = Object.entries(r.numbers || {});
+    if (nums.length) html += `<table class="nums">${nums.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${fmt(v)}</td></tr>`).join("")}</table>`;
+    if (e.encounter) html += `<details><summary>Telemetry record</summary><pre>${esc(JSON.stringify(e.encounter, null, 2))}</pre></details>`;
     if (e.action === "decision") {
       const picks = (e.result && e.result.abilities) || [];
       html += `<p>Cast: ${picks.length ? picks.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join(" ") : "nothing"}
@@ -468,6 +485,8 @@ function inspect(e) {
 function whoOf(e) {
   const a = e.agent_id && G.state.agents[e.agent_id];
   if (e.action === "gatekeeper" || e.action === "benchmark") return "Gatekeeper";
+  if (e.actor === "director") return "Director";
+  if (e.action === "hero_reply" || e.action === "self_assessment") return "Hero";
   return a ? a.name.replace(/^The /, "") : e.actor === "judge" ? "Judge" : "System";
 }
 

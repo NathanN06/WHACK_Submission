@@ -87,7 +87,68 @@ confoundingShift, testsSearchedK, rawPValue, sidakCorrectedPValue, labConcentrat
 immortalTimeShare, purgeShift, outOfSampleSkill, pairedLossPValue, design}` and
 `combatResolution {rawDamage, abilityMultiplier, clampedHpDelta, executedFormulaLatex, plainEnglishVerdict}`.
 
-## Not built yet
+## The Research Director's console (CHALLENGE THE HERO)
 
-Mystery Encounters, Cursed Affixes, the Evolution Trial (V1 to V2 on the second vault) and the
-Overworld V1-vs-V2 report are later phases of the spec.
+In a live campaign (server running, **Begin**) the user is the Research Director. The quest pauses after each
+level until the screen has shown it, so the Director can stop the expedition at any point with **Challenge the
+Hero** (or the `C` key). Code: `backend/app/pep/director.py`, `evidence.py`, `challenges.py`; screen:
+`frontend/src/pep-director.js`.
+
+| Mode | What happens |
+|---|---|
+| Ask | The hero explains its choices and the Judge's numbers from the ledger. Never creates an enemy. |
+| Challenge / Summon | The QuestionRouter maps the text to one registered challenge. If it maps, a Mystery Encounter is offered (summon now, save for later, explain, cancel). If not, it is kept as an unresolved challenge. |
+| Add evidence | Intake, verification, classification (below). A relevant, testable weakness becomes a Mystery Encounter; a valid CSV opens a Secret Research Level. |
+| New hypothesis | A named confounder becomes a Confounder Shapeshifter; another campaign outcome must first survive the Probability Phantom; anything else is an unresolved quest. |
+
+**Evidence verification.** Each submission is recorded (claim, link or file, time, research question, target
+scroll, level, source type) and checked: can it be retrieved (http/https only, public addresses only, no redirects,
+1 MB, 6 s), who published it and when (HTML meta tags, read by regular expression, never rendered or run), does the
+page contain the claim, is it relevant to the campaign. Classes: VERIFIED AND TESTABLE, VERIFIED BUT NOT DIRECTLY
+TESTABLE, UNVERIFIED, IRRELEVANT, INVALID OR INCOMPATIBLE DATA, REQUIRES ADDITIONAL EVIDENCE. Social media ranks below
+preprints, below journals, registries and agencies. A verified source does not make its claim true, and an
+unverified one is kept with that label: the hero never adopts a reported result, it only tests the weakness the
+claim points at, on its own data. PDFs are not opened. CSVs need 0/1 `treated` and `event` columns. **Network note:**
+the build container blocks most outbound hosts, so links normally end UNVERIFIED there.
+
+**Mystery Bosses** (one registered test each, training cohort only; the vaults raise an error if touched):
+
+| Boss | Question | Test | Survives if |
+|---|---|---|---|
+| Seasonal Wraith | Does it vanish after season? | Rate ratio adjusted for index-date quarter, per quarter | adjusted p < .05 in the claimed direction and season moves it < 50% |
+| Chronolock Assassin | Future information? | Immortal-time audit, purged estimate, split order | exposure starts at the first fill and training precedes the holdout |
+| Regional Hydra | Does it generalise? | Per-site rate ratios, Cochran's Q, rural sites pooled | Q p >= .05 and the rural pool holds (p < .05) |
+| Probability Phantom | Could it be chance? | 199 label shuffles in the new-user cohort, Sidak over the scroll's K | p_corr < .05 |
+| Replication Revenant | Independent evaluation? | Re-estimate on the last quarter of the training years alone | that slice holds (p < .05) |
+| Redundancy Golem | Added value beyond the baseline? | Ablation on a validation slice | SS > 0 |
+| Confounder Shapeshifter | Another variable? | Adjust for the named (or every) confounder | adjusted p < .05; an unmeasured variable ends Unresolved |
+
+HP (research integrity, `rules.MYSTERY_HP`): survived +3, fallen −10, fallen through leakage −15, unresolved 0.
+A Secret Research Level (from a CSV) has two measuring obstacles (Schema Golem, Fisher's exact test) and the
+Replication Revenant: a heterogeneity z-test between the new data's risk ratio and the hero's training estimate.
+
+## The Bridge of Judgment, Evolution and the Trial of Truth
+
+After Level IV the hero reviews every scroll, failed test, weakness, leak, unresolved encounter, remaining credit and
+the size of the sealed vault (`backend/app/pep/bridge.py`). Weaknesses carry a severity (`rules.WEAKNESSES`);
+challenges the Director raised weigh one more. The policy: **Evolve** if a focused expedition the credits can pay for
+(5 base + ability costs + 10 per re-test) fixes weaknesses weighing at least 3; else **Cross** if the claim beat the
+comparator on a time-zero design and no severe or Director-exposed weakness remains; else **Inconclusive**. The
+Director chooses; disabled options say why.
+
+**Evolution** (once): V1 is saved in full, V2 pays its credits, applies the fixes (+3 HP each), re-measures each
+level, re-fights the Director's open challenges, and re-checks the holdout as exploratory only. Then the hero
+returns to the bridge.
+
+**Trial of Truth**: the claim is locked (sha256 of the specification), then the second vault (index day >= 1450),
+never read before, scores it against the comparator exactly as the Guardian does. Outcomes (`rules.TRIAL_HP`):
+VALIDATED DISCOVERY (asserted and gained, +10), JUSTIFIED UNCERTAINTY (qualified findings, 0, whatever the vault
+says), UNJUSTIFIED CONFIDENCE (asserted, no gain, −60), INVALID METHODOLOGY (asserted with immortal time, claim
+rejected, HP to 0). Honest uncertainty is never punished; HP never decides validity. Without a Director (CLI, the
+recorded demos) the hero follows its own recommendation.
+
+## Simulated or not built
+
+Everything is still a simulated world. External links are fetched for real but are mostly blocked in the build
+container. The hero's chat replies are deterministic templates over the ledger (no language model writes them).
+Cursed Affixes are not built.

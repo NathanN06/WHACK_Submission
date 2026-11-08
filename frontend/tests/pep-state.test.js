@@ -72,3 +72,35 @@ test("a shattered scroll stays shattered and the active scroll moves on", () => 
   assert.strictEqual(gone.hp, 0);
   assert.notStrictEqual(s.active, gone.id);
 });
+
+test("every recorded campaign ends on the Bridge with a locked spec and a Trial of Truth", () => {
+  for (const L of ["A", "B", "C", "D"]) {
+    const s = replay(load(L));
+    assert.ok(s.bridge && s.assessment && s.choice, `${L}: bridge rows`);
+    assert.ok(s.trial && s.trial.outcome, `${L}: trial`);
+    assert.strictEqual(s.finale.overworld.trial.outcome, s.trial.outcome);
+    if (s.trial.evaluated) assert.ok(s.spec && s.spec.sha256);
+  }
+});
+
+test("a Mystery Boss's HP change survives the older rows of the level still being shown", () => {
+  const s = initial();
+  reduce(s, { seq: 1, action: "recruit", result: { agent: { id: "p", name: "P", archetype: "PIONEER", hp: 100, credits: 100 } } });
+  // the fight happened server-side after row 3 was written, but is shown before it
+  reduce(s, { seq: 9, action: "mystery_result", agent_id: "p", hp: 90, hp_delta: -10, result: {} });
+  assert.strictEqual(s.agents.p.hp, 90);
+  reduce(s, { seq: 3, action: "result", agent_id: "p", hp: 80, hp_delta: -20, result: {} });
+  assert.strictEqual(s.agents.p.hp, 70);            // 80 as recorded, minus the later fight's 10
+  reduce(s, { seq: 12, action: "result", agent_id: "p", hp: 70, result: {} });
+  assert.strictEqual(s.agents.p.hp, 70);            // rows after the fight already include it
+});
+
+test("the console's rows land in the chat and the mystery book", () => {
+  const s = initial();
+  reduce(s, { seq: 1, action: "chat", actor: "director", result: { mode: "CHALLENGE", text: "luck?" } });
+  reduce(s, { seq: 2, action: "mystery_offer", result: { mystery: { id: "M01", status: "offered", boss: "The Probability Phantom" } } });
+  reduce(s, { seq: 3, action: "hero_reply", result: { text: "A fair challenge.", mystery: "M01" } });
+  assert.deepStrictEqual(s.chat.map((m) => m.who), ["director", "hero"]);
+  assert.strictEqual(s.mysteries.M01.status, "offered");
+  assert.strictEqual(filterEvents(s.events, { kind: "director" }).length, 3);
+});

@@ -8,6 +8,7 @@ function showRoom() {
   $("screen-game").hidden = true; $("screen-room").hidden = false;
   $("room-headline").innerHTML = `<span class="sim">SIMULATED</span><h2>${esc(f.headline)}</h2>`;
   renderBrief(f);
+  if (typeof renderOverworld === "function") renderOverworld(f);
   window.scrollTo(0, 0);
 }
 
@@ -15,7 +16,10 @@ let roomFrame = 0;
 function roomLoop() {
   const ctx = crispContext($("room-canvas"));
   const tick = () => {
-    if (!$("screen-room").hidden && G.state.finale) drawLab(ctx, G.reduced ? 0 : roomFrame++, G.state);
+    if (!$("screen-room").hidden && G.state.finale) {
+      const draw = G.state.finale.overworld && typeof drawOverworld === "function" ? drawOverworld : drawLab;
+      draw(ctx, G.reduced ? 0 : roomFrame++, G.state);
+    }
     requestAnimationFrame(tick);
   };
   tick();

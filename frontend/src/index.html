@@ -50,6 +50,8 @@
           <div class="enemy-plate" id="enemy-plate" hidden></div>
           <div class="gate-bubble" id="gate-bubble" role="status" hidden></div>
           <div class="banner" id="banner" hidden></div>
+          <button class="btn gold challenge-btn" id="challenge" title="Pause the expedition and talk to the hero (C)">Challenge the Hero</button>
+          <div class="secret-badge" id="secret-badge" hidden></div>
         </div>
 
         <ol class="party" id="party" aria-label="The Alchemist and the three scrolls"></ol>
@@ -86,7 +88,8 @@
             <select id="f-level" aria-label="Filter by level"><option value="">All levels</option>
               <option value="1">I</option><option value="2">II</option><option value="3">III</option><option value="4">IV</option></select>
             <select id="f-kind" aria-label="Filter by kind"><option value="">Everything</option>
-              <option value="judge">Judge rulings</option><option value="agent">Hero choices</option><option value="hp">HP changes</option></select>
+              <option value="judge">Judge rulings</option><option value="agent">Hero choices</option><option value="hp">HP changes</option>
+              <option value="director">Director &amp; mysteries</option></select>
             <input id="f-text" type="search" placeholder="Search" aria-label="Search the ledger">
           </div>
           <div class="table-wrap"><table id="ledger"><thead><tr><th>#</th><th>Lv</th><th>Who</th><th>What happened</th><th>HP</th></tr></thead><tbody></tbody></table></div>
@@ -104,6 +107,50 @@
     <article class="brief" id="brief"></article>
   </section>
 
+  <!-- The Bridge of Judgment: the hero's self-assessment, the Director's choice, Evolution and the Trial of Truth -->
+  <section class="screen bridge-screen" id="screen-bridge" hidden>
+    <div class="bridge-scene frame">
+      <canvas class="pixel" id="bridge-canvas" width="320" height="180" aria-label="The Bridge of Judgment"></canvas>
+      <div class="bridge-title" id="bridge-title"><h2>The Bridge of Judgment</h2></div>
+      <div class="banner" id="bridge-banner" hidden></div>
+    </div>
+    <div class="bridge-panel">
+      <section class="frame bridge-speech" id="bridge-speech" aria-live="polite"></section>
+      <section class="frame bridge-review" id="bridge-review"></section>
+      <section class="frame bridge-log" id="bridge-log"><header><h3>On the bridge</h3></header><ol id="bridge-events"></ol></section>
+    </div>
+  </section>
+
+  <!-- CHALLENGE THE HERO: the Research Director's console -->
+  <dialog id="chat-dlg" class="frame chat-dlg" aria-labelledby="chat-title">
+    <header class="chat-head">
+      <img id="chat-portrait" alt="" width="64" height="64">
+      <div><h2 id="chat-title">Challenge the Hero</h2>
+        <p class="chat-q"><b>Research question</b> <span id="chat-question"></span></p>
+        <p class="chat-q"><b>Active hypothesis</b> <span id="chat-hypothesis"></span></p></div>
+      <button class="btn small ghost" id="chat-close" aria-label="Close and resume">Resume ▶</button>
+    </header>
+    <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
+    <div class="chat-offer" id="chat-offer" hidden></div>
+    <form class="chat-form" id="chat-form">
+      <div class="modes" role="radiogroup" aria-label="Interaction mode">
+        <button type="button" class="btn small mode" data-mode="ASK" aria-pressed="true" title="Ask the hero to explain its reasoning">Ask</button>
+        <button type="button" class="btn small mode" data-mode="CHALLENGE" aria-pressed="false" title="Dispute a claim or an assumption">Challenge</button>
+        <button type="button" class="btn small mode" data-mode="ADD_EVIDENCE" aria-pressed="false" title="Bring a link, a file or a claim the hero has not seen">Add evidence</button>
+        <button type="button" class="btn small mode" data-mode="NEW_HYPOTHESIS" aria-pressed="false" title="Suggest another explanation">New hypothesis</button>
+        <button type="button" class="btn small mode" data-mode="SUMMON" aria-pressed="false" title="Turn a testable challenge into a boss fight">Summon mystery boss</button>
+      </div>
+      <div class="chat-row">
+        <label>Scroll <select id="chat-target"></select></label>
+        <input id="chat-url" type="url" placeholder="Paper, dataset or article link (optional)" aria-label="Link">
+        <label class="file-btn">File <input id="chat-file" type="file" accept=".csv,.tsv,.txt,.json,.md,.pdf"></label>
+      </div>
+      <div class="chat-row"><textarea id="chat-text" rows="2" maxlength="2000" placeholder="Ask, challenge or tell the hero something…" aria-label="Message"></textarea>
+        <button class="btn gold" id="chat-send" type="submit">Send</button></div>
+      <p class="muted small" id="chat-note"></p>
+    </form>
+  </dialog>
+
   <dialog id="level-done" class="frame"></dialog>
   <dialog id="how-dlg" class="frame"></dialog>
   <dialog id="tutorial" class="frame"></dialog>
@@ -114,5 +161,8 @@
   <script src="pep-charts.js"></script>
   <script src="pep.js"></script>
   <script src="pep-brief.js"></script>
+  <script src="pep-mystery-sprites.js"></script>
+  <script src="pep-director.js"></script>
+  <script src="pep-bridge.js"></script>
 </body>
 </html>

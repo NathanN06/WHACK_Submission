@@ -20,10 +20,13 @@ import math
 from . import challenges as C
 from . import judge as J
 from . import rules
+from .registry import confirmation_label
 from .world import HOLDOUT_END
 
 CHOICES = ("cross", "evolve", "inconclusive")
-FIX_FOR_FALLEN = {"confounder": "BIAS_DETECTION", "chronolock": "TEMPORAL_GUARD", "chance": "PREREGISTER"}
+# What Researcher V2 may still fix after seeing results. Preregistration is not among them: once Level III's search has
+# run on this cohort, locking one outcome would be retroactive, so a search weakness has no fix here.
+FIX_FOR_FALLEN = {"confounder": "BIAS_DETECTION", "chronolock": "TEMPORAL_GUARD"}
 
 
 # ---------- the whole endgame ----------
@@ -77,7 +80,9 @@ def weaknesses(q, a) -> list[dict]:
     if not a.st.adjusted:
         add("confounding", "BIAS_DETECTION", encounter=a.encounters.get("confound"))
     if m3 and m3.get("p_corr", 0) > rules.ALPHA and a.st.K > 1:
-        add("search", "PREREGISTER" if a.archetype != "HYPE" else None, encounter=a.encounters.get("sidak"))
+        add("search", None, encounter=a.encounters.get("sidak"),
+            label=rules.WEAKNESSES["search"]["label"] + " (the search already ran on this cohort: preregistering now "
+                                                        "would be retroactive)")
     if m3 and len(m3.get("replicating", [])) < 3:
         add("generalisation", "REPLICATION_SHIELD" if not a.st.replicated else None, encounter=a.encounters.get("hlab"))
     if m3 and m3.get("n_rct") == 0:
@@ -95,8 +100,6 @@ def weaknesses(q, a) -> list[dict]:
                     severity=(2 if testable else 1) + rules.USER_RAISED_BONUS, raised_level=m["raised_level"])
             elif m["status"] == "fallen":
                 fix = FIX_FOR_FALLEN.get(m["archetype"])
-                if fix == "PREREGISTER" and (a.st.K == 1 or a.archetype == "HYPE"):
-                    fix = None
                 if fix == "BIAS_DETECTION" and a.st.adjusted:
                     fix = None
                 if fix == "TEMPORAL_GUARD" and a.st.design != "ever":
@@ -104,6 +107,10 @@ def weaknesses(q, a) -> list[dict]:
                 add(f"mystery:{m['id']}", fix, source="director", mystery=m["id"],
                     label=f"{m['boss']} exposed a weakness ({m['id']}): {m['result']['line'] if m['result'] else ''}",
                     severity=2 + rules.USER_RAISED_BONUS, raised_level=m["raised_level"])
+    sk = getattr(a, "skeptic", None)
+    if sk and sk["outcome"] == "FALLEN":   # disclosed, never fixed here: the Skeptic's test is a robustness check
+        add(f"skeptic:{sk['challenge']}", None, source="skeptic", severity=1,
+            label=f"The Skeptic's {sk['challenge']} test exposed a weakness: {sk['line']}"[:300])
     for w in out:
         w["cost"] = _cost(w)
     return out
@@ -148,6 +155,7 @@ def review(q, a) -> dict:
     m2, m3, m4 = (a.m.get(k, {}) for k in (2, 3, 4))
     return {"id": a.id, "name": a.name, "archetype": a.archetype, "claim": a.claim, "status": a.status, "hp": a.hp,
             "credits": a.credits, "eureka": a.eureka, "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K,
+            "subgroup": a.st.subgroup, "direction": a.st.direction, "hypothesis_id": a.scroll.hypothesis_id,
             "ss_oos": m4.get("ss_oos"), "p_dm": m4.get("p_dm"), "rr_used": math.exp(m4["beta_used"]) if m4 else None,
             "rr_adjusted": (m2.get("adjusted") or {}).get("rr"), "p_corr": m3.get("p_corr"),
             "replicating": len(m3.get("replicating", [])), "sites": len(m3.get("sites", [])) or 5,
@@ -306,7 +314,7 @@ def evolve(q, A: dict) -> None:
         orig.update(status="retested", retest=m["id"], resolved_by="V2", result=m["result"])
     eureka_v1 = a.eureka
     a.m[4] = J.level4(w, a.scroll, a.st)
-    raw, a.eureka = J.d_final(a.m[4], a.st.design == "new_user")
+    raw, a.eureka = J.d_final(a.m[4], a.st.design == "new_user", a.m[4]["direction_ok"])
     _step(q, a, 4, f"V2, Level IV (exploratory): SS {a.m[4]['ss_oos']:+.4f} on the holdout V1 already saw (p {a.m[4]['p_dm']:.2g}). "
                    "Not independent: only the sealed vault can validate V2.",
           {"ss_v2": a.m[4]["ss_oos"], "p_v2": a.m[4]["p_dm"], "ss_v1": v1.get(4, {}).get("ss_oos"), "exploratory": True})
@@ -338,45 +346,73 @@ def trial(q, A: dict, choice: str) -> None:
         q._emit(actor="judge", action="trial_result", line="Trial of Truth: no claim to test. The hero crosses with a qualified report.",
                 result={"trial": q.trial})
         return
+    from .campaign import plan_hash
+    from .hypotheses import ESTIMAND
     m4 = a.m.get(4, {})
     beta = float(m4.get("beta_used", 0.0))
-    spec = {"version": "V2" if q.evolved else "V1", "scroll": a.id, "claim": a.claim, "outcome": a.st.outcome,
-            "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K, "ablated": a.st.ablated,
-            "beta": round(beta, 6), "rate_ratio": round(math.exp(beta), 4), "stance": stance,
-            "evaluation": "1:1 propensity-matched new users in the second vault (index day >= %d); SS_oos > %.3f and paired "
-                          "loss p < %.2f" % (HOLDOUT_END, rules.SS_MARGIN, rules.ALPHA)}
+    c, w = q.c, q.w
+    # the claim, not this quest's slot for it: the same claim locked again on the same vault is a REPLAY
+    spec = {"version": "V2" if q.evolved else "V1", "hypothesis_id": a.scroll.hypothesis_id,
+            "hypothesis_version": a.scroll.version, "question_key": a.scroll.question_key, "claim": a.claim,
+            "population": c.population, "subgroup": a.st.subgroup, "outcome": a.st.outcome,
+            "direction": "lowers" if a.st.direction < 0 else "raises", "comparator": c.comparator, "estimand": ESTIMAND,
+            "window_days": rules.FOLLOW_UP, "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K,
+            "ablated": a.st.ablated, "beta": round(beta, 6), "rate_ratio": round(math.exp(beta), 4), "stance": stance,
+            "claim_lock_sha256": a.plan_sha, "analysis_version": rules.ANALYSIS_VERSION,
+            "multiplicity_family": rules.MULTIPLICITY_FAMILIES["sealed_vault"],
+            "partition": f"sealed vault: index day >= {HOLDOUT_END}", "cohort": w.fingerprint(), "seed": q.seed,
+            "evaluation": "1:1 propensity-matched new users in the second vault (index day >= %d), the claim's subgroup; "
+                          "SS_oos > %.3f, paired loss p < %.2f, effect in the claimed direction"
+                          % (HOLDOUT_END, rules.SS_MARGIN, rules.ALPHA)}
     digest = _hash(spec)
-    q._emit(actor="system", action="spec_locked", agent=a,
-            line=f"The research specification is locked ({digest[:12]}). The second vault opens for the first time.",
-            result={"spec": spec, "sha256": digest})
     if q.vault_opened is not None:
         raise RuntimeError("the second vault was already opened")
-    q.vault_opened = {"by": "trial", "spec": digest}
-    g = J.guardian(q.w, a.st.outcome, beta, "train", "vault2")
+    # the registry logs the opening BEFORE any vault patient is read
+    reg = q.registry.open_vault(w.fingerprint(), c.id, q.seed, digest, a.scroll.question_key, q.run_id)
+    q._emit(actor="system", action="spec_locked", agent=a,
+            line=f"The research specification is locked ({digest[:12]}). "
+                 + ("The sealed vault opens for the first time." if reg["independent"] else
+                    f"This cohort's vault was opened {reg['prior_evaluations']} time(s) before: whatever happens, this "
+                    "cannot count as a new independent confirmation."),
+            result={"spec": spec, "sha256": digest, "vault": reg})
+    q.vault_opened = {"by": "trial", "spec": digest, "kind": reg["kind"]}
+    g = J.guardian(w, a.st.outcome, beta, "train", "vault2", subgroup=a.st.subgroup)
     failures = []
     if spec["design"] == "ever":
         failures.append("Immortal time: exposure was credited before the first fill, so the claim used information from the future.")
+    if plan_hash(c, a.scroll, a.st) != a.plan_sha:
+        failures.append("The claim changed after it was locked at recruitment.")
     if _hash(spec) != digest:
         failures.append("The specification changed after it was locked.")
-    gain = (not g.get("no_overlap")) and g["ss_oos"] > rules.SS_MARGIN and g["p_dm"] < rules.ALPHA
+    dir_ok = J.direction_ok(beta, a.st.direction)
+    gain = (not g.get("no_overlap")) and g["ss_oos"] > rules.SS_MARGIN and g["p_dm"] < rules.ALPHA and dir_ok
+    independent = reg["independent"]
     if stance == "assert" and failures:
         outcome = "INVALID METHODOLOGY"
     elif stance == "assert":
-        outcome = "VALIDATED DISCOVERY" if gain else "UNJUSTIFIED CONFIDENCE"
+        outcome = ("VALIDATED DISCOVERY" if gain and independent else
+                   "NO NEW INDEPENDENT CONFIRMATION" if gain else "UNJUSTIFIED CONFIDENCE")
     else:
         outcome = "JUSTIFIED UNCERTAINTY"
+    q.registry.record_result(w.fingerprint(), reg["eval_id"], outcome, gain)
+    label = confirmation_label(reg["kind"], gain)
     before = a.hp
     a.hp = max(0, min(rules.STARTING_HP, a.hp + rules.TRIAL_HP[outcome]))
-    crossed = outcome in ("VALIDATED DISCOVERY", "JUSTIFIED UNCERTAINTY") or a.hp > 0 and outcome == "UNJUSTIFIED CONFIDENCE"
+    crossed = (outcome in ("VALIDATED DISCOVERY", "JUSTIFIED UNCERTAINTY", "NO NEW INDEPENDENT CONFIRMATION")
+               or a.hp > 0 and outcome == "UNJUSTIFIED CONFIDENCE")
     note = ""
     if stance == "qualified":
         note = (" The vault would have supported the claim: the hero was more cautious than it needed to be, which is not punished."
                 if gain and not failures else " The vault does not support a firm claim either: the caution was warranted."
                 if not failures else " The design still had a validity flaw, which the qualified report must disclose.")
+    if not dir_ok and beta != 0.0 and not g.get("no_overlap"):
+        note += " The effect the claim carried points the opposite way to the claim itself."
     q.trial = {"outcome": outcome, "stance": stance, "spec": spec, "sha256": digest, "gain": gain, "failures": failures,
                "skill": {k: g.get(k) for k in ("ss_oos", "p_dm", "matched_pairs", "loss_scroll", "loss_comparator", "lift_pct")},
                "observed": g.get("observed"), "predicted": g.get("predicted"), "hp_delta": a.hp - before, "crossed": crossed,
-               "scroll": a.id, "name": a.name, "line": rules.TRIAL_OUTCOMES[outcome] + note, "evaluated": True}
+               "scroll": a.id, "name": a.name, "line": rules.TRIAL_OUTCOMES[outcome] + note, "evaluated": True,
+               "independent": independent, "vault_kind": reg["kind"], "vault_eval": reg["eval_id"],
+               "confirmation_label": label, "direction_ok": dir_ok}
     ob, pr = g.get("observed") or {}, g.get("predicted") or {}
     chart = None if g.get("no_overlap") else {
         "kind": "grouped", "title": "Second vault, matched: one-year risk observed vs predicted",
@@ -385,10 +421,12 @@ def trial(q, A: dict, choice: str) -> None:
                    {"label": "Comparators", "values": {"observed": ob.get("comparator"), "scroll": pr.get("scroll_comparator"),
                                                         "baseline": pr.get("baseline_comparator")}}]}
     skill = "no matched pairs" if g.get("no_overlap") else f"SS_oos {g['ss_oos']:+.4f} on {g['matched_pairs']} matched pairs, paired p {g['p_dm']:.3g}"
-    q._emit(actor="judge", action="trial_result", agent=a, hp_delta=a.hp - before, passed=outcome in ("VALIDATED DISCOVERY", "JUSTIFIED UNCERTAINTY"),
-            line=f"Trial of Truth: {outcome}. {skill}.", explain=q.trial["line"],
+    q._emit(actor="judge", action="trial_result", agent=a, hp_delta=a.hp - before,
+            passed=outcome in ("VALIDATED DISCOVERY", "JUSTIFIED UNCERTAINTY", "NO NEW INDEPENDENT CONFIRMATION"),
+            line=f"Trial of Truth: {outcome}. {skill}. {label}.", explain=q.trial["line"],
             result={"trial": q.trial, "chart": chart, "numbers": q.trial["skill"],
-                    "formula": "SS_oos = 1 - Loss_claim / Loss_comparator on the second vault; validated if SS > 0.002 and p < 0.05"})
+                    "formula": "SS_oos = 1 - Loss_claim / Loss_comparator on the second vault; validated if SS > 0.002, "
+                               "p < 0.05, the effect points the claimed way and the vault was never opened before"})
     if a.hp <= 0 and a.active:
         a.status, a.verdict = "shattered", "SHATTERED"
         q._emit(actor="judge", action="shatter", agent=a, line=f"The bridge gives way beneath {a.name}. The claim falls into the abyss.",
@@ -412,6 +450,9 @@ def overworld(q) -> dict:
     elif t.get("outcome") == "JUSTIFIED UNCERTAINTY":
         conclusion = ("The hero presented qualified findings: the evidence does not justify a firm claim." if not t.get("gain") else
                       "The hero presented qualified findings; the sealed vault later showed the claim held, so a firmer claim was possible.")
+    elif t.get("outcome") == "NO NEW INDEPENDENT CONFIRMATION":
+        conclusion = (f"\"{a.claim}\" held on this cohort's vault, but the vault had been opened before, so it is "
+                      f"{t.get('confirmation_label', 'not a new independent confirmation').lower()}.")
     elif t.get("outcome") == "UNJUSTIFIED CONFIDENCE":
         conclusion = f"The hero asserted \"{a.claim}\", but the sealed vault does not support it."
     elif t.get("outcome") == "INVALID METHODOLOGY":
@@ -423,7 +464,8 @@ def overworld(q) -> dict:
     return {
         "crossed": bool(t.get("crossed")), "trial": t,
         "conclusion": {"text": conclusion, "strongest": {"scroll": a.name, "claim": a.claim} if a else None,
-                       "evidence": t.get("skill"), "uncertainty": _uncertainty(q, a), "validated": t.get("outcome") == "VALIDATED DISCOVERY"},
+                       "evidence": t.get("skill"), "uncertainty": _uncertainty(q, a), "validated": t.get("outcome") == "VALIDATED DISCOVERY",
+                       "confirmation": t.get("confirmation_label"), "independent": t.get("independent")},
         "journey": {"hp_by_level": {x.id: dict(x.hp_by_level) for x in q.agents.values()},
                     "final_hp": {x.id: x.hp for x in q.agents.values()},
                     "credits_used": sum(x.spent for x in q.agents.values()),
@@ -456,8 +498,9 @@ def _uncertainty(q, a) -> str:
     if a is None:
         return "No claim survived."
     m3 = a.m.get(3, {})
-    return (f"Observational, simulated data; {m3.get('n_rct', 0)} completed human RCTs; replicated in "
-            f"{len(m3.get('replicating', []))} of {len(m3.get('sites', [])) or 5} sites. Unmeasured confounding cannot be ruled out.")
+    return (f"Observational, simulated data; {m3.get('n_rct', 0)} completed randomized trials registered on the topic "
+            f"(results not assessed); replicated in {len(m3.get('replicating', []))} of {len(m3.get('sites', [])) or 5} "
+            "sites. Unmeasured confounding cannot be ruled out.")
 
 
 def _plain(x):

@@ -35,9 +35,12 @@ vaulted Level IV holdout, and later days are a second vault kept unexposed for a
 The **Gatekeeper Skeptic, Warden of the Null**, is not a scroll. It speaks at every gate and sets the
 benchmark in the Citadel: the matched active comparator with **no drug effect**.
 
-The hero only chooses abilities for each scroll. Scripted plans by default; with `ANTHROPIC_API_KEY` in
-`.env`, Claude plays the Alchemist and returns a JSON choice per scroll, validated against the menu and
-that scroll's credits (anything invalid falls back to the script).
+The hero only chooses abilities for each scroll, from a **blinded planning payload** (outcome-free design flags
+plus the Judge's findings from earlier levels; see Research integrity below). Without a key, the Mechanistic
+Scroll follows an **evidence-driven policy** (it buys what the flags call for and keeps credits for later
+validity-critical abilities); the Hype and Preprint Scrolls keep their fixed, sloppy plans on purpose, as the
+control group the Judge must catch. With `ANTHROPIC_API_KEY` in `.env`, Claude decides for every scroll and
+returns a validated decision object; anything invalid falls back to the script, and the ledger says why.
 
 ## Resources and the clamp
 
@@ -147,8 +150,93 @@ says), UNJUSTIFIED CONFIDENCE (asserted, no gain, −60), INVALID METHODOLOGY (a
 rejected, HP to 0). Honest uncertainty is never punished; HP never decides validity. Without a Director (CLI, the
 recorded demos) the hero follows its own recommendation.
 
+## Research integrity (analysis version `pep-judge-2.2`)
+
+**Typed claims** (`hypotheses.py`, `textpolicy.py`). The Scribe forms 2 to 6 scrolls (never one; a reigning
+champion counts toward them). Each is a typed claim the Judge tests exactly: outcome, **direction** (lowers or
+raises the event), **subgroup** (one the cohort records, with at least 150 new users and comparators in the
+training years), threat, falsifier, a fixed comparator, estimand (one-year rate ratio, new users vs the active
+comparator) and window (365 days, a typed field). The words must describe that claim: clinical names with digits
+pass (GLP-1, IL-6, type 2 diabetes, Phase 3); measured statistics (p-values, intervals, percentages, ratios, fold
+changes, sample sizes), effect sizes in words ("halves"), other time windows and populations the typed subgroup does
+not encode are rejected, entry by entry, with a recorded reason. The same outcome, subgroup, direction and archetype
+twice is one study: a duplicate. Every scroll gets an immutable id, version, parent, origin mode and question key.
+The hand-written campaign scrolls are curated foils and keep their words.
+
+**Blinded planning** (`telemetry.py`, `agents.py`). Before each decision the hero gets flags computed without any
+outcome: covariate imbalance (any |SMD| > 0.10), site concentration, immortal-time risk (exposure lag in a
+not-yet-aligned design), search multiplicity (K > 1), cohort size tier, species and lab concentration of the real
+papers, sponsored share of the posts, plus data-quality flags; and the Judge's findings from earlier levels (training
+years only) with their encounter ids. Never the holdout, the vault, a Guardian or Trial number or the planted truth:
+the payload is built from an allowlist and re-checked by a leak guard (`assert_blinded`) before it leaves the engine.
+The hero returns `selected_ability_ids`, `concern_code`, `decision_reason`, `expected_tradeoff`,
+`next_research_action` (TEST, REPLICATE, REVISE, STOP; STOP withdraws the scroll before the Guardian) and
+`cited_signals`. A reply is rejected if it names an ability off the menu, overspends, cites a signal it was not
+shown, gives a reason without citing anything, or writes any number that is not a correct rounding of one it was
+shown. Every decision row records `execution_mode` (LIVE_CLAUDE, SCRIPTED, SCRIPTED_FALLBACK), the fallback reason
+(NO_API_KEY, TIMEOUT, API_ERROR, MALFORMED_JSON, SCHEMA_INVALID, UNSUPPORTED_ACTION, INSUFFICIENT_CREDITS,
+UNSUPPORTED_CITATION, UNSUPPORTED_MEASUREMENT, LEAK_BLOCKED), the prompt version and the API request id. Abilities
+carry a stated trade-off, and the Judge logs what adjustment really cost in precision (the standard errors).
+
+**The direction rule.** A gain only counts if the effect the scroll carries points the way its claim says. A
+skilful effect pointing the other way falsifies the claim (Guardian damage as for a loss), at the Guardian, in the
+Trial of Truth and in every challenge test. Level III's per-site replication uses the claim's direction too.
+
+**Scientific status** (`science.py`, separate from HP, credits and the game verdict, which is now shown as
+"Beat the Guardian"). In order:
+1. `INVALID_ANALYSIS`: reached the Citadel with immortal time in its design, or failed the Trial's audit;
+2. `SUPPORTED_ON_SYNTHETIC_VALIDATION`: passed rule 3 on the holdout AND then beat the comparator on a never-opened
+   sealed vault, in the claimed direction (a vault success after a holdout failure is one unreplicated success:
+   INCONCLUSIVE);
+3. `PROVISIONALLY_SUPPORTED`: beat the comparator on the holdout, claimed direction, time-zero design, Holm-adjusted
+   p < 0.05 across every scroll recruited (a shattered, withdrawn or invalid scroll stays in the family with p = 1);
+4. `CONTRADICTED`: the Judge's reference analysis (new-user, adjusted, the claim's subgroup, training years) has a 95%
+   interval that excludes any important effect (a 10% change, `rules.MIE_RR`) in the claimed direction;
+5. `INCONCLUSIVE`: everything else. Not significant is not evidence of no effect.
+The reference interval assumes one effect across sites unless Cochran's Q says the sites disagree (p < 0.10); then it
+pools them with DerSimonian-Laird random effects. The brief's decision follows the status, never the game: a scroll
+can win the game and be unproven, and the brief says so.
+
+**Multiplicity families, fixed before any data** (`analysis_plan` row): Šidák within a scroll's search; Holm across
+the quest's scrolls; one locked claim on the sealed vault (no family); Mystery Bosses and Skeptic tests are
+exploratory and never raise a status. Preregister is only possible before Level III's analysis; after it, it is
+refused, and Evolution can no longer buy it (that would be retroactive).
+
+**The sealed vault's budget** (`registry.py`). Each live quest gets a fresh synthetic cohort (a new seed: new patients
+from the same simulated population; seed 0 is the published demo). The registry logs every vault opening before the
+vault is read. The first opening of a cohort's vault is its one independent confirmation; a later one is a REPLAY
+(same locked spec) or a REUSE (another spec). It can still refute a claim, never confirm it: the outcome becomes
+`NO NEW INDEPENDENT CONFIRMATION` ("PRIOR VALIDATION - NO NEW INDEPENDENT CONFIRMATION") and no confirmation is counted.
+The locked spec now carries the hypothesis id and version, population, subgroup, direction, comparator, estimand,
+window, design, multiplicity family, analysis version, cohort fingerprint and the claim lock taken at recruitment; a
+claim changed after its lock fails the audit.
+
+**Champions** (`registry.py`, title screen). Per campaign (one drug, comparator and population), the best-supported
+claim is stored with its content, lineage, results, cohort fingerprints and source ids. A repeat quest shows it on the
+title card ("INCUMBENT, Previous campaign winner") and re-tests it from 100 HP on a fresh cohort beside new
+challengers. Rules: crowned if supported; a challenger replaces it only with a strictly higher status; a supported
+incumbent defends (ties go to the incumbent); contradicted on a fresh cohort, it is dethroned; otherwise unresolved.
+Independent confirmations are only counted from a never-opened vault. A champion is labelled "not clinical evidence".
+
+**The Skeptic** (`skeptic.py`). After Level IV and before the Bridge's lock, it challenges every surviving claim with
+one test from the registered challenge registry (training years only): scripted from the released state, or Claude
+in one call per quest, validated. Its results change no HP; a fallen test is disclosed as a weakness on the Bridge.
+
+**Provenance** (`provenance.py`). Sources are typed: SIMULATED_COHORT, SIMULATED_SOCIAL_CORPUS, SIMULATED_LITERATURE,
+REAL_PUBLICATION_METADATA (PMID, DOI or Europe PMC id, the stored query and its fetch time), REAL_TRIAL_RECORD (NCT id,
+status, whether results are posted; results are not assessed), REAL_PHARMACOVIGILANCE_REPORTS (FAERS counts: no
+denominator, not causal). Only stored identifiers are cited. Each brief statement maps to a ledger row, method,
+analysis version, data partition, cohort seed and fingerprint.
+
+**The truth-versus-luck benchmark** (`evaluate.py`, `scripts/evaluate_pep.py`, results in
+`docs/evaluation_summary.json`). 20 independent seeds of six scenarios (A, B, C, D, A with every effect removed, A
+with site heterogeneity), the whole pipeline each time, scored against the planted truth only after each world ends.
+
 ## Simulated or not built
 
 Everything is still a simulated world. External links are fetched for real but are mostly blocked in the build
 container. The hero's chat replies are deterministic templates over the ledger (no language model writes them).
-Cursed Affixes are not built.
+Cursed Affixes are not built. Not simulated, so not benchmarked: missing data, informative censoring, unmeasured
+confounding, effect modification by subgroup. Equivalence claims ("no effect") and claimed effect sizes are not
+testable claims; the Scribe may only claim a direction. A live-Claude-versus-script comparison runs only with a key
+(`scripts/evaluate_pep.py --live`); until then it is reported as pending.

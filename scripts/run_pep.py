@@ -44,9 +44,11 @@ def main() -> None:
         result = PepQuest(run_id, cid, ledger, make_hero(args.llm), seed=args.seed).run()
         print(f"\n[{c.letter}] {result['headline'] if result else 'no result'}")
         if result:
+            print(f"   decision: {result['brief']['decision']}")
             for r in result["ranking"]:
-                print(f"   {r['name']:28} {r['verdict']:10} hp={r['hp']:3} score={r['score']['total']:6.1f} "
-                      f"traps {r['traps_falsified']}/{r['traps_faced']} spent={r['spent']}")
+                status = (r.get("science") or {}).get("status", "")
+                print(f"   {r['name']:28} game {r['verdict']:10} science {status:34} hp={r['hp']:3} "
+                      f"score={r['score']['total']:6.1f} traps {r['traps_falsified']}/{r['traps_faced']} spent={r['spent']}")
         if args.out:
             out = ROOT / args.out
             out.mkdir(parents=True, exist_ok=True)

@@ -1,0 +1,475 @@
+{
+  "title": "Hypothesis Gauntlet: truth-versus-luck benchmark",
+  "generated_at": "2026-11-08 10:00:38",
+  "analysis_version": "pep-judge-2.2",
+  "methodology": [
+    "Every world is an independent synthetic cohort (its own seed): new patients, holdout and sealed vault.",
+    "Each world runs the production pipeline end to end: scripted Scribe (deterministic) forming 6 claims, the hero deciding from blinded telemetry, the Judge, the Skeptic, the Bridge's autopilot choice and the Trial of Truth, then science.py's statuses.",
+    "The planted truth is read only after a world has finished, to score it.",
+    "A claim is TRUE_IMPORTANT when its planted effect points the claimed way by at least the minimal important effect (rate ratio 0.9), TRUE_TRIVIAL when it points that way by less, NULL with no effect, OPPOSITE when it points the other way. Supported = PROVISIONALLY_SUPPORTED or SUPPORTED_ON_SYNTHETIC_VALIDATION.",
+    "Rates carry Wilson 95% intervals over the stated denominators. Claims that share an estimand in one world share one reference interval, so coverage is counted once per world and estimand.",
+    "The reference interval assumes one effect across sites unless Cochran's Q flags disagreement (p < 0.1); then it pools the sites with DerSimonian-Laird random effects."
+  ],
+  "seeds": [
+    100,
+    101,
+    102,
+    103,
+    104,
+    105,
+    106,
+    107,
+    108,
+    109,
+    110,
+    111,
+    112,
+    113,
+    114,
+    115,
+    116,
+    117,
+    118,
+    119
+  ],
+  "scenarios": {
+    "A": {
+      "base": "GLP1_ADDICTION",
+      "kind": "mixed",
+      "what": "a strong benefit (alcohol), a weak one (opioid) and none (smoking); confounding and immortal time",
+      "site_beta": []
+    },
+    "B": {
+      "base": "BPC157_TENDON",
+      "kind": "null",
+      "what": "no effect anywhere; strong healthy-user confounding",
+      "site_beta": []
+    },
+    "C": {
+      "base": "LONGEVITY_STACK",
+      "kind": "null",
+      "what": "no effect anywhere; testosterone and training confound",
+      "site_beta": []
+    },
+    "D": {
+      "base": "GLP1_NAION",
+      "kind": "mixed",
+      "what": "a rare harm (NAION, 0.4% a year), a weak harm (retinopathy) and a trivial one (vision)",
+      "site_beta": []
+    },
+    "A_NULL": {
+      "base": "GLP1_ADDICTION",
+      "kind": "null",
+      "null": true,
+      "what": "campaign A with every effect removed: the same confounding and immortal time, no truth to find",
+      "site_beta": []
+    },
+    "A_SITES": {
+      "base": "GLP1_ADDICTION",
+      "kind": "mixed",
+      "site_beta": [
+        -0.35,
+        -0.15,
+        0.0,
+        0.15,
+        0.35
+      ],
+      "what": "campaign A with site heterogeneity: the drug's effect differs across the five EHR sites"
+    }
+  },
+  "metrics": {
+    "worlds": {
+      "total": 120,
+      "null": 60,
+      "with_true_effects": 60
+    },
+    "claims": 720,
+    "familywise_error_null_worlds": {
+      "k": 0,
+      "n": 60,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0602
+    },
+    "false_confirmation_null_worlds": {
+      "k": 0,
+      "n": 60,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0602
+    },
+    "false_support_rate": {
+      "k": 0,
+      "n": 460,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0083
+    },
+    "false_discovery_proportion": {
+      "k": 0,
+      "n": 48,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0741
+    },
+    "trivial_among_supported": {
+      "k": 0,
+      "n": 48,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0741
+    },
+    "sign_errors": 0,
+    "power_true_claims_valid_design": {
+      "k": 48,
+      "n": 120,
+      "rate": 0.4,
+      "lo": 0.3168,
+      "hi": 0.4894
+    },
+    "power_true_claims_any_design": {
+      "k": 48,
+      "n": 240,
+      "rate": 0.2,
+      "lo": 0.1543,
+      "hi": 0.2552
+    },
+    "power_by_estimand_valid_design": {
+      "A:alcohol": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "lo": 0.8389,
+        "hi": 1.0
+      },
+      "A:opioid": {
+        "k": 5,
+        "n": 20,
+        "rate": 0.25,
+        "lo": 0.1119,
+        "hi": 0.4687
+      },
+      "A_SITES:alcohol": {
+        "k": 20,
+        "n": 20,
+        "rate": 1.0,
+        "lo": 0.8389,
+        "hi": 1.0
+      },
+      "A_SITES:opioid": {
+        "k": 2,
+        "n": 20,
+        "rate": 0.1,
+        "lo": 0.0279,
+        "hi": 0.301
+      },
+      "D:naion": {
+        "k": 0,
+        "n": 20,
+        "rate": 0.0,
+        "lo": 0.0,
+        "hi": 0.1611
+      },
+      "D:retinopathy": {
+        "k": 1,
+        "n": 20,
+        "rate": 0.05,
+        "lo": 0.0089,
+        "hi": 0.2361
+      }
+    },
+    "true_claims_wrongly_contradicted": {
+      "k": 0,
+      "n": 240,
+      "rate": 0.0,
+      "lo": 0.0,
+      "hi": 0.0158
+    },
+    "reference_ci_coverage": {
+      "k": 347,
+      "n": 360,
+      "rate": 0.9639,
+      "lo": 0.9392,
+      "hi": 0.9788
+    },
+    "reference_ci_coverage_by_scenario": {
+      "A": {
+        "k": 57,
+        "n": 60,
+        "rate": 0.95,
+        "lo": 0.863,
+        "hi": 0.9829
+      },
+      "A_NULL": {
+        "k": 57,
+        "n": 60,
+        "rate": 0.95,
+        "lo": 0.863,
+        "hi": 0.9829
+      },
+      "A_SITES": {
+        "k": 60,
+        "n": 60,
+        "rate": 1.0,
+        "lo": 0.9398,
+        "hi": 1.0
+      },
+      "B": {
+        "k": 58,
+        "n": 60,
+        "rate": 0.9667,
+        "lo": 0.8864,
+        "hi": 0.9908
+      },
+      "C": {
+        "k": 57,
+        "n": 60,
+        "rate": 0.95,
+        "lo": 0.863,
+        "hi": 0.9829
+      },
+      "D": {
+        "k": 58,
+        "n": 60,
+        "rate": 0.9667,
+        "lo": 0.8864,
+        "hi": 0.9908
+      }
+    },
+    "status_by_truth": {
+      "TRUE_IMPORTANT": {
+        "SUPPORTED_ON_SYNTHETIC_VALIDATION": {
+          "k": 41,
+          "n": 240,
+          "rate": 0.1708,
+          "lo": 0.1285,
+          "hi": 0.2235
+        },
+        "PROVISIONALLY_SUPPORTED": {
+          "k": 7,
+          "n": 240,
+          "rate": 0.0292,
+          "lo": 0.0142,
+          "hi": 0.059
+        },
+        "INCONCLUSIVE": {
+          "k": 72,
+          "n": 240,
+          "rate": 0.3,
+          "lo": 0.2455,
+          "hi": 0.3608
+        },
+        "CONTRADICTED": {
+          "k": 0,
+          "n": 240,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0158
+        },
+        "INVALID_ANALYSIS": {
+          "k": 120,
+          "n": 240,
+          "rate": 0.5,
+          "lo": 0.4372,
+          "hi": 0.5628
+        }
+      },
+      "TRUE_TRIVIAL": {
+        "SUPPORTED_ON_SYNTHETIC_VALIDATION": {
+          "k": 0,
+          "n": 20,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.1611
+        },
+        "PROVISIONALLY_SUPPORTED": {
+          "k": 0,
+          "n": 20,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.1611
+        },
+        "INCONCLUSIVE": {
+          "k": 19,
+          "n": 20,
+          "rate": 0.95,
+          "lo": 0.7639,
+          "hi": 0.9911
+        },
+        "CONTRADICTED": {
+          "k": 1,
+          "n": 20,
+          "rate": 0.05,
+          "lo": 0.0089,
+          "hi": 0.2361
+        },
+        "INVALID_ANALYSIS": {
+          "k": 0,
+          "n": 20,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.1611
+        }
+      },
+      "NULL": {
+        "SUPPORTED_ON_SYNTHETIC_VALIDATION": {
+          "k": 0,
+          "n": 400,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0095
+        },
+        "PROVISIONALLY_SUPPORTED": {
+          "k": 0,
+          "n": 400,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0095
+        },
+        "INCONCLUSIVE": {
+          "k": 89,
+          "n": 400,
+          "rate": 0.2225,
+          "lo": 0.1845,
+          "hi": 0.2658
+        },
+        "CONTRADICTED": {
+          "k": 191,
+          "n": 400,
+          "rate": 0.4775,
+          "lo": 0.429,
+          "hi": 0.5264
+        },
+        "INVALID_ANALYSIS": {
+          "k": 120,
+          "n": 400,
+          "rate": 0.3,
+          "lo": 0.2572,
+          "hi": 0.3466
+        }
+      },
+      "OPPOSITE": {
+        "SUPPORTED_ON_SYNTHETIC_VALIDATION": {
+          "k": 0,
+          "n": 60,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0602
+        },
+        "PROVISIONALLY_SUPPORTED": {
+          "k": 0,
+          "n": 60,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0602
+        },
+        "INCONCLUSIVE": {
+          "k": 3,
+          "n": 60,
+          "rate": 0.05,
+          "lo": 0.0171,
+          "hi": 0.137
+        },
+        "CONTRADICTED": {
+          "k": 57,
+          "n": 60,
+          "rate": 0.95,
+          "lo": 0.863,
+          "hi": 0.9829
+        },
+        "INVALID_ANALYSIS": {
+          "k": 0,
+          "n": 60,
+          "rate": 0.0,
+          "lo": 0.0,
+          "hi": 0.0602
+        }
+      }
+    },
+    "status_rates": {
+      "SUPPORTED_ON_SYNTHETIC_VALIDATION": {
+        "k": 41,
+        "n": 720,
+        "rate": 0.0569,
+        "lo": 0.0423,
+        "hi": 0.0763
+      },
+      "PROVISIONALLY_SUPPORTED": {
+        "k": 7,
+        "n": 720,
+        "rate": 0.0097,
+        "lo": 0.0047,
+        "hi": 0.0199
+      },
+      "INCONCLUSIVE": {
+        "k": 183,
+        "n": 720,
+        "rate": 0.2542,
+        "lo": 0.2237,
+        "hi": 0.2872
+      },
+      "CONTRADICTED": {
+        "k": 249,
+        "n": 720,
+        "rate": 0.3458,
+        "lo": 0.312,
+        "hi": 0.3813
+      },
+      "INVALID_ANALYSIS": {
+        "k": 240,
+        "n": 720,
+        "rate": 0.3333,
+        "lo": 0.2999,
+        "hi": 0.3686
+      }
+    },
+    "vault_reuse_blocked": {
+      "k": 12,
+      "n": 12,
+      "rate": 1.0,
+      "lo": 0.7575,
+      "hi": 1.0
+    },
+    "compute": {
+      "encounters_mean": 89.7,
+      "credits_spent_mean": 150.0,
+      "seconds_mean": 1.802,
+      "api_calls": 0
+    }
+  },
+  "examples": {
+    "false_discovery_defeated": {
+      "world": "B-s100",
+      "scroll": "h1",
+      "archetype": "HYPE",
+      "outcome": "return",
+      "subgroup": "everyone",
+      "direction": -1,
+      "planted_log_hr": 0.0,
+      "status": "INVALID_ANALYSIS",
+      "game_verdict": "SHATTERED"
+    },
+    "true_discovery_survived": {
+      "world": "A-s100",
+      "scroll": "h2",
+      "archetype": "PIONEER",
+      "outcome": "alcohol",
+      "subgroup": "everyone",
+      "direction": -1,
+      "planted_log_hr": -0.430783,
+      "status": "SUPPORTED_ON_SYNTHETIC_VALIDATION",
+      "game_verdict": "VALIDATED"
+    }
+  },
+  "live_vs_scripted": {
+    "status": "PENDING",
+    "reason": "No live Claude run was made (no API key, or --live not given). No gain from AI is claimed."
+  },
+  "limitations": [
+    "All cohorts are simulated from one family of data-generating models (exponential event times, log-linear confounding); real data can break assumptions this benchmark never tests.",
+    "Missing data, informative censoring, unmeasured confounding and effect modification by subgroup are not simulated, so the benchmark says nothing about them.",
+    "The hand-written HYPE and PREPRINT scrolls follow fixed sloppy plans by design, so they are INVALID by construction; power is reported separately for claims analysed on a valid (time-zero) design.",
+    "Only the scripted hero is benchmarked unless a live run is recorded above."
+  ],
+  "logs": "runs.jsonl"
+}

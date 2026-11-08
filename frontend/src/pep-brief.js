@@ -104,16 +104,58 @@ function drawLab(ctx, f, s) {
 function renderBrief(f) {
   const b = f.brief, s = G.state;
   const cite = (id) => (id ? `<button class="cite" data-cite="${esc(id)}" title="Open this encounter in the Test Inspector">${esc(id)}</button>` : "");
-  const evid = (list) => list.map((x) => `<li>${esc(x.text)} ${cite(x.cite)}</li>`).join("");
+  const row = (seq) => (seq ? `<button class="cite" data-seq="${seq}" title="Open this ledger row in the Test Inspector">row ${seq}</button>` : "");
+  const evid = (list) => list.map((x) => `<li>${esc(x.text)} ${cite(x.cite)}${x.cite ? "" : row(x.seq)}</li>`).join("");
   const scoreRows = f.ranking.map((r, i) => `<tr class="${r.id === (f.champion && f.champion.id) ? "champ" : ""} ${r.status !== "active" ? "fallen" : ""}">
     <td>${i + 1}</td><td><strong>${esc(r.name)}</strong><small>${esc(r.title || r.archetype)} · ${esc(r.outcome || "")}</small></td>
-    <td><span class="verdict v-${r.verdict.replace(/\s/g, "")}">${esc(r.verdict)}</span></td>
+    <td><span class="verdict v-${r.verdict.replace(/\s/g, "")}">${esc(verdictLabel(r.verdict))}</span></td>
     <td>${r.skill && r.skill.ss_oos != null ? (r.skill.ss_oos >= 0 ? "+" : "") + r.skill.ss_oos.toFixed(4) : "—"}</td><td>${r.skill ? fmt(r.skill.p_dm, 3) : "—"}</td>
     <td>${r.hp}</td><td>${r.traps_falsified}/${r.traps_faced}</td><td>${r.spent}</td>
     <td>${fmt(r.score.skill, 1)}</td><td>${fmt(r.score.hp, 1)}</td><td>${fmt(r.score.traps, 1)}</td><td>${fmt(r.score.efficiency, 1)}</td>
     <td><strong>${fmt(r.score.total, 1)}</strong></td></tr>`).join("")
     + (f.benchmark ? `<tr class="bench"><td></td><td><strong>${esc(f.benchmark.name)}</strong><small>${esc(f.benchmark.title)} · ${esc(f.benchmark.claim)}</small></td>
       <td><span class="verdict v-BASELINE">BASELINE</span></td><td colspan="10" class="muted">the bar itself: SS<sub>oos</sub> = 0 by definition</td></tr>` : "");
+  const sci = f.science || null;
+  const sciRows = sci ? f.ranking.map((r) => {
+    const x = r.science || {};
+    const ci = x.rr_reference != null ? `${fmt(x.rr_reference, 2)} (${fmt(x.rr_lo, 2)} to ${fmt(x.rr_hi, 2)})` : "—";
+    return `<tr><td><strong>${esc(r.name)}</strong><small>${esc(r.direction || "")} ${esc(r.outcome || "")} · ${esc(r.subgroup || "everyone")}</small></td>
+      <td><span class="status s-${esc(x.status || "")}">${esc(statusLabel(x.status))}</span></td>
+      <td><span class="verdict v-${r.verdict.replace(/\s/g, "")}">${esc(verdictLabel(r.verdict))}</span></td>
+      <td>${ci}</td><td>${x.holm_p != null ? fmt(x.holm_p, 3) : "—"}</td>
+      <td class="small">${esc((x.reasons || []).join(" "))}</td></tr>`;
+  }).join("") : "";
+  const best = sci && sci.best_supported, winner = sci && sci.game_winner;
+  const defense = f.champion_defense;
+  const manifest = f.manifest ? Object.entries(f.manifest.scrolls).map(([id, m]) => {
+    const a = s.agents[id] || { name: id };
+    const items = m.items.map((x) => `<li><span class="src">${esc(x.type.replace(/_/g, " ").toLowerCase())}</span>
+      ${x.url ? `<a href="${esc(x.url)}" target="_blank" rel="noopener">${esc(x.id || x.title || "")}</a>` : esc(x.id || "")}
+      ${x.title ? ` ${esc(x.title)}` : x.detail ? ` ${esc(x.detail)}` : ""}${x.year ? ` (${x.year})` : ""}
+      ${x.results_posted != null ? ` · results posted: ${x.results_posted ? "yes" : "no"} (not assessed)` : ""}</li>`).join("");
+    return `<details><summary>${esc(a.name)}: ${m.papers_total} real papers · ${esc(m.types.join(", ").replace(/_/g, " ").toLowerCase())}</summary>
+      <ul class="manifest">${items}</ul>${m.papers_total > 12 ? `<p class="small muted">First 12 papers shown; all ${m.paper_ids.length} identifiers are in the ledger.</p>` : ""}</details>`;
+  }).join("") : "";
+  const sciHTML = sci ? `<section class="science"><h3>Scientific conclusion</h3>
+      <p class="path"><b>Propose</b> → <b>Design</b> → <b>Test</b> → <b>Critique</b> → <b>Replicate</b> → <b>Lock</b> →
+        <b>${f.overworld ? "Confirm" : "Confirm (not run)"}</b> → <b>Report</b></p>
+      <div class="two"><div class="sci-card ${best ? "go" : "hold"}"><small>Best-supported claim</small>
+        <strong>${best ? esc(best.name) : "No confirmed discovery"}</strong>
+        <p>${best ? `<span class="status s-${esc(best.status)}">${esc(statusLabel(best.status))}</span> “${esc(best.claim)}”` :
+          `Best status reached: <span class="status s-${esc(sci.best_status || "")}">${esc(statusLabel(sci.best_status))}</span>`}</p></div>
+      <div class="sci-card"><small>Game winner</small><strong>${winner ? esc(winner.name) : "—"}</strong>
+        <p>${winner ? esc(verdictLabel(winner.verdict)) : ""}${sci.agree ? "" : " · <b>the game and the science disagree</b>: HP and battles won never decide what is true."}</p></div></div>
+      <div class="table-wrap"><table class="score"><thead><tr><th>Claim (typed)</th><th>Scientific status</th><th>Game</th>
+        <th title="The Judge's reference analysis: new-user, adjusted, the claim's subgroup, training years">Reference rate ratio (95% CI)</th>
+        <th title="Holm-adjusted across every scroll of the quest">Holm p</th><th>Why</th></tr></thead><tbody>${sciRows}</tbody></table></div>
+      <p class="small muted">Statuses follow rules fixed before the run; ${sci.family ? `Holm over the ${sci.family.size} claims recruited` : ""};
+        an important effect is a ${Math.round(100 * (1 - (sci.mie_rr || 0.9)))}% change. ${f.cohort ? `Cohort: seed ${f.cohort.seed}, fingerprint ${esc(f.cohort.fingerprint || "")}${f.cohort.fresh === false ? " (used by earlier quests)" : ""}.` : ""}</p>
+      ${defense ? `<div class="sci-card defense"><small>Champion</small><strong>${esc(defense.outcome.replace(/_/g, " "))}</strong>
+        <p>${defense.champion ? `${esc(defense.champion.title)}: ${esc(statusLabel(defense.champion.status_now || defense.champion.status))},
+          ${defense.champion.confirmations} independent confirmation(s). ${esc(defense.champion.label || "")}` : "No champion holds the title."}</p></div>` : ""}
+      ${manifest ? `<details class="manifest-wrap"><summary>The Archivist's manifest: every source, by type</summary>${manifest}
+        <p class="small muted">${esc(f.manifest.note)}</p></details>` : ""}
+    </section>` : "";
   const maxDmg = Math.max(1, ...f.damage.map((d) => d.hp_lost));
   const dmg = f.damage.map((d) => `<li><span>${esc(d.trap)}</span><i style="width:${(d.hp_lost / maxDmg * 100).toFixed(0)}%"></i><b>${d.hp_lost} HP · ${Math.round(d.share * 100)}%</b></li>`).join("");
   const champ = f.champion;
@@ -130,11 +172,13 @@ function renderBrief(f) {
     ${b.evidence.length ? `<section><h3>Evidence</h3><ul class="evidence">${evid(b.evidence)}</ul></section>` : ""}
     ${b.misleading.length ? `<section><h3>What misled the others</h3><ul class="evidence">${evid(b.misleading)}</ul></section>` : ""}
     <section><h3>Uncertainty</h3><p>${esc(b.uncertainty)}</p></section>
-    <section><h3>Composite score</h3><div class="table-wrap"><table class="score">
+    ${sciHTML}
+    <section><h3>Composite score (the game)</h3><div class="table-wrap"><table class="score">
       <thead><tr><th>#</th><th>Scroll</th><th>Verdict</th><th>SS<sub>oos</sub></th><th>Paired p</th><th>HP</th><th>Traps</th><th>Credits</th>
       <th title="${esc(f.score_rules.skill)}">Skill</th><th title="${esc(f.score_rules.hp)}">HP pts</th><th title="${esc(f.score_rules.traps)}">Trap pts</th>
       <th title="${esc(f.score_rules.efficiency)}">Efficiency</th><th>Total</th></tr></thead><tbody>${scoreRows}</tbody></table></div>
-      <p class="small muted">Score = ${Object.values(f.score_rules).map(esc).join(" + ")}. The champion is the highest-scoring VALIDATED scroll.</p></section>
+      <p class="small muted">Score = ${Object.values(f.score_rules).map(esc).join(" + ")}. The game winner is the highest-scoring
+        scroll that beat the Guardian; whether its claim is true is the scientific status above, decided separately.</p></section>
     <div class="two">
       <section><h3>HP after each level</h3>${hpChart(f.ranking)}</section>
       <section><h3>Where the HP went</h3><ul class="dmg">${dmg || "<li>No damage dealt.</li>"}</ul></section>
@@ -144,6 +188,7 @@ function renderBrief(f) {
     <div class="brief-buttons"><button class="btn" id="back-log">Back to the battle log</button>
       <button class="btn" id="dl">Download the ledger (JSONL)</button><button class="btn gold" id="again">Choose another campaign</button></div>`;
   for (const c of document.querySelectorAll("[data-cite]")) c.onclick = () => openCite(c.dataset.cite);
+  for (const c of document.querySelectorAll("[data-seq]")) c.onclick = () => openRow(Number(c.dataset.seq));
   $("back-log").onclick = backToLog;
   $("again").onclick = exitGame;
   $("dl").onclick = () => {
@@ -158,9 +203,17 @@ function backToLog() {
   $("screen-room").hidden = true; $("screen-game").hidden = false;
 }
 
+function openRow(seq) {
+  const e = G.state.events.find((x) => x.seq === seq);
+  if (e) showRow(e);
+}
+
 function openCite(id) {
   const e = findEncounter(G.state.events, id);
-  if (!e) return;
+  if (e) showRow(e);
+}
+
+function showRow(e) {
   backToLog();
   G.pinned = e.seq; inspect(e);
   const tr = document.querySelector(`#ledger tr[data-seq="${e.seq}"]`);

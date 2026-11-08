@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const { replay, initial, reduce, nodeStates, filterEvents, beat, findEncounter } = require("../src/pep-state.js");
+const { replay, initial, reduce, nodeStates, filterEvents, beat, findEncounter, statusLabel, heroMode } = require("../src/pep-state.js");
 
 const load = (L) => fs.readFileSync(path.join(__dirname, `../src/demo/demo-${L}.jsonl`), "utf8")
   .split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -36,11 +36,31 @@ test("B, C and D end with the baseline holding; A crowns a validated champion", 
   assert.strictEqual(a.champion.verdict, "VALIDATED");
 });
 
-test("every brief citation points at a real encounter", () => {
+test("every brief statement points at the ledger: a real encounter, or a real row", () => {
   for (const L of ["A", "B", "C", "D"]) {
     const events = load(L), b = replay(events).finale.brief;
-    for (const ev of [...b.evidence, ...b.misleading]) assert.ok(findEncounter(events, ev.cite), `${L} ${ev.cite}`);
+    for (const ev of [...b.evidence, ...b.misleading]) {
+      assert.ok(ev.cite ? findEncounter(events, ev.cite) : events.some((e) => e.seq === ev.seq), `${L} ${ev.cite || ev.seq}`);
+    }
   }
+});
+
+test("every scroll gets a scientific status apart from its game verdict, and every choice says who made it", () => {
+  for (const L of ["A", "B", "C", "D"]) {
+    const s = replay(load(L));
+    for (const id of s.order) {
+      const a = s.agents[id];
+      assert.ok(a.science && statusLabel(a.science.status), `${L} ${id} status`);
+      assert.strictEqual(a.science.status, s.finale.ranking.find((r) => r.id === id).science.status);
+      for (const d of Object.values(a.decisions)) assert.ok(d.execution && d.execution.execution_mode, `${L} ${id} mode`);
+    }
+    assert.strictEqual(heroMode(s), "SCRIPTED");
+    assert.ok(s.plan && s.plan.holm_family.length === s.order.length, `${L} Holm family fixed before any data`);
+  }
+  // the recorded worlds: A's true effect is supported; B and C have no effect; D's real harm is too rare to confirm
+  assert.strictEqual(replay(load("A")).finale.science.best_supported.status, "SUPPORTED_ON_SYNTHETIC_VALIDATION");
+  for (const L of ["B", "C", "D"]) assert.strictEqual(replay(load(L)).finale.science.best_supported, null);
+  assert.ok(replay(load("D")).finale.brief.decision.includes("INCONCLUSIVE"));
 });
 
 test("a partial ledger shows the level in progress", () => {

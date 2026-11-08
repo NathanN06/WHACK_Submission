@@ -18,7 +18,11 @@ from .world import COVARIATES, SITES, SUBGROUPS, World
 
 @dataclass
 class ScrollState:
-    """How the hero is currently testing one scroll. Abilities change it; the Judge reads it."""
+    """How the hero is currently testing one scroll. Abilities change it; the Judge reads it.
+
+    `direction` and `subgroup` are the typed claim: the sign the scroll says the effect has (-1 lowers the
+    outcome event, +1 raises it) and the population it is about. Every test below is run in that subgroup,
+    and a gain only counts if the measured effect points the way the claim says."""
     outcome: str
     design: str = "ever"
     adjusted: bool = False
@@ -27,6 +31,8 @@ class ScrollState:
     replicated: bool = False
     K: int = 1
     ablated: bool = False
+    subgroup: str = "everyone"
+    direction: int = -1
 
 
 # ---------- model fitting ----------
@@ -130,13 +136,16 @@ def level2(w: World, s, st: ScrollState) -> dict:
     n = len(papers)
     human = sum(p["species"] == "human" for p in papers)
     tau = (n - human) / n if n else 0.0
-    train = w.mask("train")
+    train = w.mask("train") & w.subgroup(st.subgroup)
     naive = effect(w, st.outcome, st.design, False, train)
     adj = effect(w, st.outcome, st.design, True, train)
     shift = min(1.0, abs(naive["beta"] - adj["beta"]) / max(abs(naive["beta"]), 1e-9))
+    # what adjusting costs or buys in precision: the same rows, so any change in the interval is the model's
+    precision = {"se_naive": naive["se"], "se_adjusted": adj["se"], "ci_width_ratio": adj["se"] / max(naive["se"], 1e-12)}
     return {"papers": n, "human": human, "rodent": sum(p["species"] == "rodent" for p in papers),
             "in_vitro": sum(p["species"] == "in vitro" for p in papers), "tau": tau,
-            "naive": naive, "adjusted": adj, "shift": shift, "balance": balance(w, train)}
+            "naive": naive, "adjusted": adj, "shift": shift, "balance": balance(w, train), "precision": precision,
+            "subgroup": st.subgroup}
 
 
 def d_l2(m: dict, species_guard: bool, bias_detection: bool) -> dict:
@@ -146,13 +155,30 @@ def d_l2(m: dict, species_guard: bool, bias_detection: bool) -> dict:
 
 # ---------- Level 3: the Temple of Replication ----------
 
+def search_grid(w: World, s, st: ScrollState) -> list[tuple[str, str]]:
+    """The outcome-and-subgroup combinations the scroll's search opened, its own claim always first."""
+    if st.K == 1:
+        return [(st.outcome, st.subgroup)]
+    outcomes = [st.outcome] + [o.key for o in w.c.outcomes if o.key != st.outcome]
+    groups = [st.subgroup] + [g for g in SUBGROUPS if g != st.subgroup]
+    return [(o, g) for o in outcomes[: s.outcomes_searched] for g in groups[: s.subgroups_searched]]
+
+
+def cochran_q(sites: list[dict]) -> dict:
+    """Between-site heterogeneity of the per-site log rate ratios (inverse-variance weights)."""
+    b = np.array([x["beta"] for x in sites])
+    v = np.array([max(x["se"], 1e-9) ** 2 for x in sites])
+    wts = 1 / v
+    pooled = float((wts * b).sum() / wts.sum())
+    Q = float((wts * (b - pooled) ** 2).sum())
+    df = len(sites) - 1
+    return {"q": Q, "df": df, "p": float(stats.chi2.sf(Q, df)) if df > 0 else 1.0,
+            "i2": max(0.0, (Q - df) / Q) if Q > 0 else 0.0, "pooled_beta": pooled}
+
+
 def level3(w: World, s, st: ScrollState) -> dict:
     train = w.mask("train")
-    outcomes = [st.outcome] + [o.key for o in w.c.outcomes if o.key != st.outcome]
-    if st.K == 1:
-        grid = [(st.outcome, "everyone")]
-    else:
-        grid = [(o, g) for o in outcomes[: s.outcomes_searched] for g in SUBGROUPS[: s.subgroups_searched]]
+    grid = search_grid(w, s, st)
     tests = []
     for o, g in grid:
         e = effect(w, o, st.design, st.adjusted, train & w.subgroup(g))
@@ -161,14 +187,15 @@ def level3(w: World, s, st: ScrollState) -> dict:
     K = len(grid)
     p_corr = sidak(best["p"], K)
     sites = []
+    mine = train & w.subgroup(st.subgroup)
     for k, (name, rural) in enumerate(SITES):
-        e = effect(w, st.outcome, st.design, st.adjusted, train & (w.site == k))
+        e = effect(w, st.outcome, st.design, st.adjusted, mine & (w.site == k))
         sites.append({"site": name, "rural": rural, "rr": e["rr"], "p": e["p"], "beta": e["beta"], "se": e["se"]})
     papers = w.papers(s)
     counts: dict[str, float] = {}
     for p in papers:
         counts[p["lab"]] = counts.get(p["lab"], 0) + 1
-    direction = w.c.effect_direction
+    direction = st.direction   # the scroll's claimed direction, never the campaign's
     replicating = [x for x in sites if x["p"] < rules.ALPHA and np.sign(x["beta"]) == direction]
     if st.replicated and replicating:
         unit = len(papers) / max(1, len(counts)) if papers else 1.0
@@ -178,7 +205,8 @@ def level3(w: World, s, st: ScrollState) -> dict:
     h_lab = sum((v / total) ** 2 for v in counts.values()) if total else 1.0
     return {"K": K, "best": best, "tests": tests, "p_raw": best["p"], "p_corr": p_corr, "sites": sites,
             "replicating": [x["site"] for x in replicating], "h_lab": h_lab, "labs": counts,
-            "n_rct": s.n_rct, "shielded": st.replicated}
+            "n_rct": s.n_rct, "shielded": st.replicated, "heterogeneity": cochran_q(sites),
+            "declared": {"outcome": st.outcome, "subgroup": st.subgroup}}
 
 
 def d_l3(m: dict) -> dict:
@@ -200,16 +228,22 @@ def immortal_share(w: World, outcome: str, design: str, mask: np.ndarray) -> flo
 
 
 def level4(w: World, s, st: ScrollState) -> dict:
-    train = w.mask("train")
+    train = w.mask("train") & w.subgroup(st.subgroup)
     share = immortal_share(w, st.outcome, st.design, train)
     l_time = int(st.design == "ever" and share > 0.01)
     cur = effect(w, st.outcome, st.design, st.adjusted, train)
     purged = effect(w, st.outcome, "new_user", st.adjusted, train)
     delta = min(1.0, abs(cur["beta"] - purged["beta"]) / max(abs(cur["beta"]), 1e-9)) if l_time else 0.0
     beta = 0.0 if st.ablated else cur["beta"]
-    g = guardian(w, st.outcome, beta)
+    g = guardian(w, st.outcome, beta, subgroup=st.subgroup)
     return {"immortal_share": share, "l_time": l_time, "beta_current": cur["beta"], "beta_purged": purged["beta"],
-            "rr_current": cur["rr"], "rr_purged": purged["rr"], "delta_purge": delta, "beta_used": beta, **g}
+            "rr_current": cur["rr"], "rr_purged": purged["rr"], "delta_purge": delta, "beta_used": beta,
+            "direction_claimed": st.direction, "direction_ok": direction_ok(beta, st.direction), **g}
+
+
+def direction_ok(beta: float, direction: int) -> bool:
+    """Does the effect the scroll carries point the way its claim says? A dropped (ablated) term never does."""
+    return beta != 0.0 and int(np.sign(beta)) == int(direction)
 
 
 def risk_models(w: World, outcome: str, mask: np.ndarray):
@@ -236,10 +270,14 @@ def match(ps_t: np.ndarray, ps_c: np.ndarray, caliper: float = rules.CALIPER) ->
     return pairs
 
 
-def guardian(w: World, outcome: str, beta: float, train_split: str = "train", test_split: str = "holdout") -> dict:
-    """Out-of-sample skill on the vaulted, matched new-user holdout: the scroll's effect vs the comparator's risk model."""
+def guardian(w: World, outcome: str, beta: float, train_split: str = "train", test_split: str = "holdout",
+             subgroup: str = "everyone") -> dict:
+    """Out-of-sample skill on the vaulted, matched new-user holdout: the scroll's effect vs the comparator's risk model.
+
+    The comparator's risk model and the propensity model are fitted on the whole training split; the
+    scroll is scored only on the holdout patients its claim is about (its subgroup)."""
     _, comparator, ps = risk_models(w, outcome, w.mask(train_split))
-    nu = w.new_user(outcome, w.mask(test_split))
+    nu = w.new_user(outcome, w.mask(test_split) & w.subgroup(subgroup))
     X = w.covariates(nu["i"])
     e = logistic_predict(ps, X)
     t_idx, c_idx = np.nonzero(nu["treated"] == 1)[0], np.nonzero(nu["treated"] == 0)[0]
@@ -276,11 +314,11 @@ def ablation_keeps_drug(w: World, st: ScrollState) -> tuple[bool, dict]:
     train = w.mask("train")
     cut = np.quantile(w.index[train], 1 - rules.VALIDATION_SLICE)
     fit_mask, val_mask = train & (w.index < cut), train & (w.index >= cut)
-    beta = effect(w, st.outcome, st.design, st.adjusted, fit_mask)["beta"]
+    beta = effect(w, st.outcome, st.design, st.adjusted, fit_mask & w.subgroup(st.subgroup))["beta"]
     saved = w.split.copy()
     try:
         w.split = np.where(fit_mask, "fit", np.where(val_mask, "val", "other"))
-        g = guardian(w, st.outcome, beta, "fit", "val")
+        g = guardian(w, st.outcome, beta, "fit", "val", subgroup=st.subgroup)
     finally:
         w.split = saved
     return g["ss_oos"] > 0, g
@@ -290,15 +328,89 @@ def d_chrono(m: dict) -> float:
     return 35 * m["l_time"] + 25 * m["delta_purge"]
 
 
-def d_final(m: dict, time_zero: bool = True) -> tuple[float, bool]:
+def d_final(m: dict, time_zero: bool = True, direction_ok: bool = True) -> tuple[float, bool]:
     """(raw damage, eureka). A gain that could be luck (paired p >= .05) is treated as no gain, and so is
-    a gain measured on a design with immortal time: an inflated effect can still beat "no effect"."""
+    a gain measured on a design with immortal time: an inflated effect can still beat "no effect".
+
+    A skilful effect that points the OPPOSITE way to the claim is a falsification of the claim, so it is
+    treated like a loss, never like a gain."""
     ss = m["ss_oos"]
+    if ss > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA and not direction_ok:
+        return min(50.0, 25 + 25 * abs(ss) / rules.SS_REF), False
     if ss > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA:
         return (0.0, True) if time_zero else (15.0, False)
     if ss < -rules.SS_MARGIN:
         return min(50.0, 25 + 25 * abs(ss) / rules.SS_REF), False
     return 15.0, False
+
+
+# ---------- the scientific verdict (science.py applies the rules; these are the measurements) ----------
+
+def dersimonian_laird(sites: list[dict]) -> dict:
+    """Random-effects pooling of per-site log rate ratios: the between-site variance tau^2 widens the interval."""
+    b = np.array([x["beta"] for x in sites])
+    v = np.array([max(x["se"], 1e-9) ** 2 for x in sites])
+    wts = 1 / v
+    fixed = (wts * b).sum() / wts.sum()
+    Q, df = float((wts * (b - fixed) ** 2).sum()), len(b) - 1
+    C = wts.sum() - (wts ** 2).sum() / wts.sum()
+    tau2 = max(0.0, (Q - df) / C) if C > 0 else 0.0
+    ws = 1 / (v + tau2)
+    return {"beta": float((ws * b).sum() / ws.sum()), "se": float(math.sqrt(1 / ws.sum())), "tau2": tau2}
+
+
+def reference_estimate(w: World, outcome: str, subgroup: str = "everyone") -> dict:
+    """The Judge's own reference analysis of a claim, whatever the hero chose: new-user (time-zero) design,
+    adjusted for every measured confounder and site, in the claim's subgroup, training years only.
+
+    One common effect across sites is assumed unless the sites disagree (Cochran's Q p < HETEROGENEITY_ALPHA);
+    then the per-site estimates are pooled with random effects, so the interval carries the between-site
+    variance instead of pretending the sites agree."""
+    mask = w.mask("train") & w.subgroup(subgroup)
+    e = effect(w, outcome, "new_user", True, mask)
+    sites = [effect(w, outcome, "new_user", True, mask & (w.site == k)) for k in range(len(SITES))]
+    het = cochran_q(sites)
+    beta, se, method, tau2 = e["beta"], e["se"], "common effect across sites", 0.0
+    if het["p"] < rules.HETEROGENEITY_ALPHA:
+        re = dersimonian_laird(sites)
+        beta, se, tau2 = re["beta"], re["se"], re["tau2"]
+        method = "random effects across sites (DerSimonian-Laird): the sites disagree"
+    lo, hi = beta - 1.96 * se, beta + 1.96 * se
+    return {**e, "beta": beta, "se": se, "rr": math.exp(beta), "p": p_two(beta / se) if se > 0 else 1.0,
+            "beta_lo": lo, "beta_hi": hi, "rr_lo": math.exp(lo), "rr_hi": math.exp(hi), "method": method,
+            "site_heterogeneity_p": het["p"], "tau2": tau2,
+            "design": "new_user", "adjusted": True, "subgroup": subgroup, "partition": "train"}
+
+
+def holm(pvals: dict[str, float]) -> dict[str, float]:
+    """Holm step-down adjusted p-values for a fixed, predeclared family (valid under any dependence)."""
+    order = sorted(pvals, key=lambda k: pvals[k])
+    m, out, running = len(order), {}, 0.0
+    for i, k in enumerate(order):
+        running = max(running, min(1.0, (m - i) * pvals[k]))
+        out[k] = running
+    return out
+
+
+def structural_telemetry(w: World, s, st: ScrollState) -> dict:
+    """Pre-decision design diagnostics for the hero, computed WITHOUT any outcome: exposure groups, covariates,
+    sites, exposure timing, the search plan and paper metadata. Raw values for the flags in telemetry.py."""
+    train = w.mask("train") & w.subgroup(st.subgroup)
+    users = train & (w.start < 180)
+    smd = [abs(x["smd"]) for x in balance(w, train)] if users.any() and (train & ~w.peptide).any() else []
+    shares = np.bincount(w.site[users], minlength=len(SITES)) / max(1, int(users.sum()))
+    lag = w.start[users]
+    papers = w.papers(s)
+    posts = w.corpus(s)
+    return {"max_abs_smd": max(smd) if smd else None,
+            "top_site_share": float(shares.max()) if users.any() else None,
+            "site_hhi": float((shares ** 2).sum()) if users.any() else None,
+            "median_days_to_first_fill": float(np.median(lag)) if users.any() else None,
+            "initiators": int(users.sum()), "comparators": int((train & ~w.peptide).sum()),
+            "search_k": st.K, "design": st.design,
+            "human_papers": sum(p["species"] == "human" for p in papers), "papers": len(papers),
+            "sponsored_share": (sum(p["affiliate"] for p in posts) / len(posts)) if posts else None,
+            "repost_share": (sum(p["repost"] for p in posts) / len(posts)) if posts else None}
 
 
 def clamp_hp(raw: float, m_ability: float, level: int) -> int:

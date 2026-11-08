@@ -41,21 +41,33 @@ LEVELS = {
 # Abilities: what a scroll can buy with its own 100 credits.
 ABILITIES = {
     "DENOISE": {"name": "De-Noise Filter", "cost": 15, "level": 1,
-                "effect": "Strips affiliate-coded posts and collapses reposts before Rule 1 is measured."},
+                "effect": "Strips affiliate-coded posts and collapses reposts before Rule 1 is measured.",
+                "tradeoff": "Counts fewer posts: if most stories were sponsored, the independent-story count can fall."},
     "EXPLORATORY_CLAIM": {"name": "Exploratory Claim", "cost": 5, "level": 1,
-                          "effect": "Declares the claim exploratory: cheap, weak cover, M = 0.50 for Rule 1."},
+                          "effect": "Declares the claim exploratory: cheap, weak cover, M = 0.50 for Rule 1.",
+                          "tradeoff": "Changes no estimate: it only weakens what the scroll asserts about the rumours."},
     "SPECIES_GUARD": {"name": "Species Guard", "cost": 15, "level": 2,
-                      "effect": "Counts human evidence only: M = 0.20 on the species term, if any human study supports the claim."},
+                      "effect": "Counts human evidence only: M = 0.20 on the species term, if any human study supports the claim.",
+                      "tradeoff": "Worthless when no human study exists; the cohort estimate is unchanged."},
     "BIAS_DETECTION": {"name": "Bias Detection", "cost": 15, "level": 2,
-                       "effect": "Adjusts for the measured confounders before the Phantom strikes: confounding term 0, +5 HP, and the adjusted estimate is carried forward."},
+                       "effect": "Adjusts for the measured confounders before the Phantom strikes: confounding term 0, +5 HP, and the adjusted estimate is carried forward.",
+                       "tradeoff": "Removes measured confounding only (never unmeasured); the interval can widen or narrow, "
+                                   "and the Judge logs by how much."},
     "PREREGISTER": {"name": "Preregister", "cost": 25, "level": 3,
-                    "effect": "Locks one outcome and population before testing: K = 1, so p_corr = p_raw."},
+                    "effect": "Locks one outcome and population before testing: K = 1, so p_corr = p_raw.",
+                    "tradeoff": "Only before Level III's analysis: tests the declared outcome and subgroup alone, so no "
+                                "search penalty but no chance to find another effect. Worthless if K is already 1."},
     "REPLICATION_SHIELD": {"name": "Replication Shield", "cost": 25, "level": 3,
-                           "effect": "Re-runs the adjusted analysis in every EHR site; sites that replicate count as independent labs in H_lab."},
+                           "effect": "Re-runs the adjusted analysis in every EHR site; sites that replicate count as independent labs in H_lab.",
+                           "tradeoff": "Per-site estimates are noisy: a real but small effect may replicate in few sites."},
     "TEMPORAL_GUARD": {"name": "Temporal Guard", "cost": 20, "level": 4,
-                       "effect": "New-user, time-zero design: person-time before the first prescription stays unexposed."},
+                       "effect": "New-user, time-zero design: person-time before the first prescription stays unexposed.",
+                       "tradeoff": "Removes immortal time; exposed person-time shrinks to after the first fill. "
+                                   "Without it no gain is trusted."},
     "ABLATION_STRIKE": {"name": "Ablation Strike", "cost": 15, "level": 4,
-                        "effect": "Drops the drug term if it does not lower loss on a validation slice of the training years."},
+                        "effect": "Drops the drug term if it does not lower loss on a validation slice of the training years.",
+                        "tradeoff": "Guards against overfitting, but a small real effect can be dropped, and a dropped "
+                                    "term can never win."},
 }
 M_ABILITY = {"EXPLORATORY_CLAIM": ("L1", 0.50)}
 SPECIES_GUARD_M = 0.20
@@ -121,6 +133,7 @@ VERDICTS = {
     "NOT BETTER": "Survived, but did not predict unseen patients better than the active comparator.",
     "BASELINE": "The Gatekeeper's benchmark: the matched active comparator with no drug effect.",
     "SHATTERED": "The scroll's research integrity reached 0 HP.",
+    "WITHDRAWN": "The hero stopped testing the scroll after its exploratory results, before the Guardian.",
 }
 
 
@@ -157,15 +170,61 @@ EVOLVE_THRESHOLD = 3        # evolve only if the fixable weaknesses the credits 
 EVOLUTION_BASE_COST = 5     # the focused second expedition itself
 EVOLUTION_FIX_HEAL = 3      # each weakness V2 genuinely fixes: a modest reward
 
+# ---------- The scientific verdict (science.py): separate from HP, credits and the game result ----------
+# A scroll can win the game and still be scientifically unproven, and the reverse. These rules decide the
+# scientific status of every claim from measurements already in the ledger. Fixed before any run.
+
+ANALYSIS_VERSION = "pep-judge-2.2"   # bumped whenever an estimator or a status rule changes
+MIE_RR = 0.90                        # minimal important effect: a 10% relative change in the one-year event rate
+HETEROGENEITY_ALPHA = 0.10           # sites disagree (Cochran's Q p below this): the reference pools with random effects
+STATUS_ORDER = ["SUPPORTED_ON_SYNTHETIC_VALIDATION", "PROVISIONALLY_SUPPORTED", "INCONCLUSIVE", "CONTRADICTED",
+                "INVALID_ANALYSIS"]
+STATUSES = {
+    "SUPPORTED_ON_SYNTHETIC_VALIDATION": "Beat the comparator on the holdout and again on an independent, never-opened "
+                                         "sealed vault, on a valid design, in the claimed direction. Synthetic data only.",
+    "PROVISIONALLY_SUPPORTED": "Beat the comparator on the holdout in the claimed direction on a valid design, after Holm "
+                               "correction across every scroll of the quest. Not yet independently confirmed.",
+    "INCONCLUSIVE": "Neither supported nor contradicted: the evidence is too weak or too imprecise either way. "
+                    "Not significant is not evidence of no effect.",
+    "CONTRADICTED": "The Judge's reference analysis rules out the claim: an effect the opposite way, or a confidence "
+                    "interval that excludes any important effect (a 10% change) in the claimed direction.",
+    "INVALID_ANALYSIS": "The scroll's own analysis had a predefined validity failure (immortal time), so whatever it "
+                        "measured cannot support the claim.",
+}
+MULTIPLICITY_FAMILIES = {
+    "within_scroll_search": "Sidak over the K outcome-and-subgroup combinations a scroll's search opens (Level III). "
+                            "Valid for these positively correlated subgroup tests.",
+    "across_scrolls": "Holm over every scroll recruited this quest, fixed at recruitment: a scroll that shatters, is "
+                      "withdrawn or carries an invalid design stays in the family with p = 1.",
+    "sealed_vault": "One locked claim per quest, tested once on a never-opened vault: no family, alpha = 0.05.",
+    "challenges": "Mystery Bosses and Skeptic challenges are exploratory robustness checks on the training years; they "
+                  "never raise a scientific status.",
+}
+
+# ---------- The hero's pre-decision telemetry (telemetry.py): design facts only, never an outcome ----------
+SMD_IMBALANCE = 0.10        # |standardized mean difference| above this on any confounder: imbalanced
+SITE_DOMINANCE = 0.50       # one site holding more than half of the new users: single-site dominance
+SIZE_TIERS = (300, 2000)    # new users in the training years: below 300 SMALL_N, below 2000 MEDIUM_N, else LARGE_N
+SPONSORED_HEAVY = 0.25      # share of supporting posts carrying an affiliate code or sponsorship
+CONCERNS = ["CONFOUNDING", "IMMORTAL_TIME", "MULTIPLICITY", "SPECIES_GAP", "SOCIAL_HYPE", "SITE_CLUSTERING",
+            "CITATION_ISLAND", "SMALL_SAMPLE", "NONE"]
+NEXT_ACTIONS = ["TEST", "REPLICATE", "REVISE", "STOP"]
+
+# ---------- The sealed vault's budget (registry.py) ----------
+VAULT_CONFIRMATIONS = 1     # each synthetic cohort's sealed vault confirms at most one claim, once
+
 TRIAL_HP = {
     "VALIDATED DISCOVERY": +10,
     "JUSTIFIED UNCERTAINTY": 0,
+    "NO NEW INDEPENDENT CONFIRMATION": 0,
     "UNJUSTIFIED CONFIDENCE": -60,
     "INVALID METHODOLOGY": -100,
 }
 TRIAL_OUTCOMES = {
-    "VALIDATED DISCOVERY": "The locked claim beat the comparator on the protected vault, on a valid design. The hero crosses.",
+    "VALIDATED DISCOVERY": "The locked claim beat the comparator on the protected vault, on a valid design, in the claimed direction. The hero crosses.",
     "JUSTIFIED UNCERTAINTY": "The hero presented qualified findings and did not assert more than the evidence allows. The hero crosses with a qualified report.",
+    "NO NEW INDEPENDENT CONFIRMATION": "The claim held, but on a sealed vault that had already been opened for this cohort: a reused vault can "
+                                       "refute a claim, never confirm it again. The hero crosses; the confirmation count does not change.",
     "UNJUSTIFIED CONFIDENCE": "The hero asserted a claim the protected vault does not support. The bridge cracks beneath it.",
     "INVALID METHODOLOGY": "The final audit found a predefined validity failure in the asserted claim. The bridge collapses and the claim is rejected.",
 }

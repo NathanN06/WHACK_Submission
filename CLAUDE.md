@@ -5,10 +5,9 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 ## Layout
 - `backend/` — API and research/statistics engine
 - `frontend/` — web UI
+- `docs/` — notes and pitch material
 - `scripts/download_data.py` — downloads datasets into `data/` (gitignored; never commit data)
 - `scripts/build_db.py` — loads the CSVs into `data/whack.duckdb` (run with `.venv/bin/python`)
-
-- `scripts/build_level3_db.py` creates the separate `data/level3_health.sqlite3` with raw readings and daily star facts; it never overwrites an existing file.
 
 ## Data conventions
 - `participant_id` = a person (`CGM-001`, `BUT-101`); `session_id` = one measurement period. Train/holdout splits must be by `participant_id`.
@@ -21,3 +20,15 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - Hackathon pace: keep things simple and demo-able; prefer working end-to-end over polish.
 - Every "discovery" should be backed by a test that guards against luck (e.g. holdout replication, permutation tests, multiple-comparison correction).
 - Never commit secrets — API keys go in `.env` (gitignored).
+
+## The Arena: rules for anyone (human or Claude) editing backend/app/arena
+- Agents never produce numbers, p-values or verdicts. Only engine.py measures; only referee.py rules.
+- Cross-validation folds are split by participant_id, never by meal.
+- Every number the UI shows comes from the ledger (data/runs/*.jsonl).
+- Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/*.test.js
+
+## The Gauntlet (Peptide & GLP-1 Edition): rules for editing backend/app/pep
+- The hero (agents.py) only chooses abilities for each scroll. Only judge.py measures; only campaign.py applies the damage rules in rules.py; report.py only copies measured numbers.
+- Every campaign is a simulated world (world.py) with planted truths: never present its results as real findings or medical advice.
+- The "vault2" split (index day >= 1450) is reserved for a future Evolution Trial: never read it in levels I to IV.
+- After changing the engine, re-record the demos: .venv/bin/python scripts/run_pep.py all --out frontend/src/demo --quiet

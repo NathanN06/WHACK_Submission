@@ -1,0 +1,82 @@
+Loaded 45 CGMacros people, 58 BUT CGM people, sensors: one
+  1 D1 system                           rep=100  $=60  Day I: The Baseline
+  2 D1 lanista  G01  hp=100             rep=100  $=60  carbs changes the rise after a meal
+  3 D1 engine   G01  hp=100             rep=100  $=59  The Trial: +0.84 mg/dL per meal across 45 people (95% CI +0.30 to +1.28).
+  4 D1 lanista  G01  hp=100             rep=100  $=59  I back carbs! Fame awaits!
+  5 D1 sceptic  G01  hp=100             rep=100  $=59  Shuffle it. If scrambled data does as well, it's luck.
+  6 D1 engine   G01  hp=100             rep=100  $=56  The Shuffler: 0 of 500 shuffled copies did as well (p = 0.002).
+  7 D1 sceptic  G01  hp=100             rep=100  $=56  Inquisitor, make sure nothing here peeks at the result.
+  8 D1 engine   G01  hp=100             rep=100  $=56  The Inquisitor: nothing here is built from the result.
+  9 D1 engine   G01  hp=100  SURVIVOR   rep=100  $=56  Survives the arena!
+ 10 D1 engine                           rep=100  $=56  The Census counts 1 claim tried so far. The more you try, the higher the bar.
+ 11 D2 system                           rep=100  $=56  Day II: The Macros
+ 12 D2 lanista  G02  hp=100             rep=100  $=56  fiber changes the rise after a meal
+ 13 D2 engine   G02  hp=0    NO_EDGE    rep=100  $=55  The Trial: +0.08 mg/dL per meal across 45 people (95% CI -0.04 to +0.25). Hit for 100!
+ 14 D2 lanista  G03  hp=100             rep=100  $=55  protein changes the rise after a meal
+ 15 D2 engine   G03  hp=100             rep=100  $=54  The Trial: +0.28 mg/dL per meal across 45 people (95% CI +0.05 to +0.50).
+ 16 D2 lanista  G03  hp=100             rep=100  $=54  I back protein! Fame awaits!
+ 17 D2 sceptic  G03  hp=100             rep=100  $=54  Shuffle it. If scrambled data does as well, it's luck.
+ 18 D2 engine   G03  hp=100             rep=100  $=51  The Shuffler: 0 of 500 shuffled copies did as well (p = 0.002).
+ 19 D2 sceptic  G03  hp=100             rep=100  $=51  Inquisitor, make sure nothing here peeks at the result.
+ 20 D2 engine   G03  hp=100             rep=100  $=51  The Inquisitor: nothing here is built from the result.
+ 21 D2 engine   G03  hp=100  SURVIVOR   rep=100  $=51  Survives the arena!
+ 22 D2 lanista  G04  hp=100             rep=100  $=51  fat changes the rise after a meal
+ 23 D2 engine   G04  hp=0    NO_EDGE    rep=100  $=50  The Trial: +0.10 mg/dL per meal across 45 people (95% CI -0.06 to +0.27). Hit for 100!
+ 24 D2 lanista  G05  hp=100             rep=100  $=50  sugar changes the rise after a meal
+ 25 D2 engine   G05  hp=0    UNTESTABLE rep=100  $=49  The Trial: cannot be judged (only 1 people have this data).
+ 26 D2 lanista  G06  hp=100             rep=100  $=49  calories changes the rise after a meal
+ 27 D2 engine   G06  hp=0    NO_EDGE    rep=100  $=48  The Trial: +0.00 mg/dL per meal across 45 people (95% CI -0.19 to +0.16). Hit for 100!
+ 28 D2 engine                           rep=100  $=48  The Census counts 5 claims tried so far. The more you try, the higher the bar.
+ 29 D3 system                           rep=100  $=48  Day III: The Lifestyle
+ 30 D3 lanista  G07  hp=100             rep=100  $=48  hour of day changes the rise after a meal
+ 31 D3 engine   G07  hp=0    REDUNDANT  rep=100  $=47  The Trial: +0.28 mg/dL per meal across 45 people (95% CI -0.28 to +0.81). Hit for 100!
+ 32 D3 lanista  G08  hp=100             rep=100  $=47  hours since last meal changes the rise after a meal
+ 33 D3 engine   G08  hp=0    REDUNDANT  rep=100  $=46  The Trial: +1.10 mg/dL per meal across 45 people (95% CI -0.23 to +2.45). Hit for 100!
+ 34 D3 lanista  G09  hp=100             rep=100  $=46  steps after changes the rise after a meal
+ 35 D3 engine   G09  hp=0    UNTESTABLE rep=100  $=45  The Trial: cannot be judged (only 1 people have this data).
+ 36 D3 lanista  G10  hp=100             rep=100  $=45  hr after changes the rise after a meal
+ 37 D3 engine   G10  hp=0    NO_EDGE    rep=100  $=44  The Trial: -0.13 mg/dL per meal across 45 people (95% CI -0.35 to +0.05). Hit for 100!
+ 38 D3 lanista  G11  hp=100             rep=100  $=44  hba1c changes the rise after a meal
+ 39 D3 engine   G11  hp=100             rep=100  $=43  The Trial: +1.53 mg/dL per meal across 45 people (95% CI +0.35 to +2.79).
+ 40 D3 lanista  G11  hp=100             rep=100  $=43  I back hba1c! Fame awaits!
+ 41 D3 sceptic  G11  hp=100             rep=100  $=43  Shuffle it. If scrambled data does as well, it's luck.
+ 42 D3 engine   G11  hp=100             rep=100  $=40  The Shuffler: 0 of 500 shuffled copies did as well (p = 0.002).
+ 43 D3 sceptic  G11  hp=100             rep=100  $=40  Inquisitor, make sure nothing here peeks at the result.
+ 44 D3 engine   G11  hp=100             rep=100  $=40  The Inquisitor: nothing here is built from the result.
+ 45 D3 engine   G11  hp=100  SURVIVOR   rep=100  $=40  Survives the arena!
+ 46 D3 engine                           rep=100  $=40  The Census counts 9 claims tried so far. The more you try, the higher the bar.
+ 47 D4 system                           rep=100  $=40  Day IV: The Decoy Games
+ 48 D4 emperor  G12  hp=100             rep=100  $=40  Wearing a lucky charm lowers the rise
+ 49 D4 engine   G12  hp=0    NO_EDGE    rep=100  $=39  The Trial: -0.03 mg/dL per meal across 45 people (95% CI -0.07 to +0.01). Hit for 100!
+ 50 D4 emperor  G13  hp=100             rep=100  $=39  The moon phase changes the rise
+ 51 D4 engine   G13  hp=100             rep=100  $=38  The Trial: +0.11 mg/dL per meal across 45 people (95% CI +0.02 to +0.20).
+ 52 D4 lanista  G13  hp=100             rep=100  $=38  I back moon_phase! Fame awaits!
+ 53 D4 sceptic  G13  hp=100             rep=100  $=38  Shuffle it. If scrambled data does as well, it's luck.
+ 54 D4 engine   G13  hp=100             rep=100  $=35  The Shuffler: 1 of 500 shuffled copies did as well (p = 0.004).
+ 55 D4 sceptic  G13  hp=100             rep=100  $=35  Inquisitor, make sure nothing here peeks at the result.
+ 56 D4 engine   G13  hp=100             rep=100  $=35  The Inquisitor: nothing here is built from the result.
+ 57 D4 engine   G13  hp=100  SURVIVOR   rep=100  $=35  Survives the arena!
+ 58 D4 emperor  G14  hp=100             rep=100  $=35  The meal intensity score predicts the rise
+ 59 D4 engine   G14  hp=100             rep=100  $=34  The Trial: +24.44 mg/dL per meal across 45 people (95% CI +21.21 to +27.91).
+ 60 D4 lanista  G14  hp=100             rep=100  $=34  I back meal_intensity_score! Fame awaits!
+ 61 D4 sceptic  G14  hp=100             rep=100  $=34  That's too good to be true. Inquisitor, check where it came from.
+ 62 D4 engine   G14  hp=0    LEAKY      rep=100  $=34  The Inquisitor: meal_intensity_score is built from the result itself! Hit for 100!
+ 63 D4 system   G14  hp=0    LEAKY      rep=80   $=34  Lanista reputation -20.
+ 64 D4 emperor  G15  hp=100             rep=80   $=34  The carb load index adds to carbs
+ 65 D4 engine   G15  hp=0    REDUNDANT  rep=80   $=33  The Trial: +0.04 mg/dL per meal across 45 people (95% CI -0.12 to +0.21). Hit for 100!
+ 66 D4 engine                           rep=80   $=33  The Census counts 13 claims tried so far. The more you try, the higher the bar.
+ 67 D5 system                           rep=80   $=33  Day V: The Champion
+ 68 D5 system   G01  hp=100  SURVIVOR   rep=80   $=33  Locked before the fight: aaac1a772ece
+ 69 D5 engine   G01  hp=0    FALLEN     rep=80   $=28  The Champion of Brno: +0.46 mg/dL per meal across 58 unseen people (95% CI -0.29 to +1.15). Hit for 100!
+ 70 D5 system   G01  hp=0    FALLEN     rep=60   $=28  Lanista reputation -20.
+ 71 D5 system   G03  hp=100  SURVIVOR   rep=60   $=28  Locked before the fight: 3da18f1a020a
+ 72 D5 engine   G03  hp=0    FALLEN     rep=60   $=23  The Champion of Brno: -1.23 mg/dL per meal across 58 unseen people (95% CI -1.54 to -0.97). Hit for 100!
+ 73 D5 system   G03  hp=0    FALLEN     rep=40   $=23  Lanista reputation -20.
+ 74 D5 system   G11  hp=100  SURVIVOR   rep=40   $=23  Locked before the fight: fef1aae1e10a
+ 75 D5 engine   G11  hp=100  UNTESTABLE rep=40   $=18  The Champion of Brno: cannot be judged (only 0 holdout people have this data).
+ 76 D5 system   G13  hp=100  SURVIVOR   rep=40   $=18  Locked before the fight: be1214e8356e
+ 77 D5 engine   G13  hp=0    FALLEN     rep=40   $=13  The Champion of Brno: -0.06 mg/dL per meal across 58 unseen people (95% CI -0.14 to +0.03). Hit for 100!
+ 78 D5 system   G13  hp=0    FALLEN     rep=20   $=13  Lanista reputation -20.
+ 79 D5 system                           rep=20   $=13  15 gladiators fought. Decoys caught: 4 of 4.
+
+Ledger saved to data/runs/cli-s0-script.jsonl

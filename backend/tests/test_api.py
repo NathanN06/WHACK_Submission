@@ -151,8 +151,18 @@ def test_live_quests_get_fresh_cohorts_and_a_champion_defends_its_title(quest_cl
     champ = quest_client.get("/api/champions").json()["GLP1_ADDICTION"]
     assert second[0]["result"]["incumbent"]["hypothesis_id"] == champ["hypothesis"]["hypothesis_id"]
     assert next(e for e in second if e["action"] == "champion")["result"]["outcome"] in ("DEFENDED", "REPLACED", "UNRESOLVED")
-    card = next(c for c in quest_client.get("/api/campaigns").json() if c["letter"] == "A")["champion"]
+    campaigns = {c["letter"]: c for c in quest_client.get("/api/campaigns").json()}
+    card = campaigns["A"]["champion"]
     assert card and card["title"] and "not clinical evidence" in card["label"].lower()
+    assert campaigns["A"]["last_quest"]["quest_id"] == second[0]["run_id"]          # the latest round, not the first
+    assert campaigns["B"]["champion"] is None and campaigns["B"]["last_quest"] is None
+
+
+def test_the_ui_is_always_revalidated_so_a_stale_script_never_hides_new_features(quest_client):
+    assert quest_client.get("/").headers["cache-control"] == "no-cache"
+    assert quest_client.get("/pep.js").headers["cache-control"] == "no-cache"
+    assert "cache-control" not in {k.lower() for k in quest_client.get("/api/campaigns").headers if k.lower() == "cache-control"} \
+        or quest_client.get("/api/campaigns").headers.get("cache-control") != "no-cache"
 
 
 def test_unknown_campaigns_and_paths_are_refused(quest_client, tmp_path):

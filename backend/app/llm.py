@@ -62,7 +62,7 @@ def ask_traced(complete: Complete | None, system: str, payload: dict, schema: ty
         trace["attempts"] += 1
         try:
             text = complete(system, user)
-            trace["request_id"] = getattr(complete, "last_request_id", None)
+            trace["request_id"] = request_id_of(complete)
             reply = schema.model_validate_json(_extract_json(text))
             trace.update(execution_mode=LIVE, schema_validation="VALID", fallback_reason=None)
             return reply, trace
@@ -100,17 +100,32 @@ def anthropic_complete(model: str | None = None, temperature: float | None = Non
     client = anthropic.Anthropic(**opts)
     model = model or os.environ.get("ARENA_MODEL", "claude-sonnet-5-5")
 
+    import threading
+    local = threading.local()      # calls may run in parallel threads: each remembers its own request id
+    lock = threading.Lock()
+
     def complete(system: str, user: str) -> str:
         extra = {} if temperature is None else {"temperature": temperature}
-        complete.calls += 1
+        with lock:
+            complete.calls += 1
         msg = client.messages.create(model=model, max_tokens=1500, system=system,
                                      messages=[{"role": "user", "content": user}], **extra)
-        complete.last_request_id = getattr(msg, "id", None)
+        local.request_id = getattr(msg, "id", None)
+        complete.last_request_id = local.request_id
         return "".join(block.text for block in msg.content if block.type == "text")
 
     complete.last_request_id = None
+    complete.local = local
     complete.calls = 0     # API calls made, for the benchmark's compute budget
     return complete
+
+
+def request_id_of(complete) -> str | None:
+    """The id of the response this thread's last call received (safe when several calls run at once)."""
+    local = getattr(complete, "local", None)
+    if local is not None:
+        return getattr(local, "request_id", None)
+    return getattr(complete, "last_request_id", None)
 
 
 def load_env_key(path: str | os.PathLike = ".env") -> None:

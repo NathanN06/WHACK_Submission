@@ -205,8 +205,19 @@ class ChampionStore(_Store):
                     data.setdefault("retired", {}).setdefault(subject, []).append({**rec, "retired_at": now})
                 else:
                     data["champions"][subject] = rec
+            # every quest leaves a trace, champion or not, so the title screen can say what happened last time
+            data.setdefault("last", {})[subject] = {
+                "quest_id": quest["quest_id"], "at": now, "outcome": outcome, "seed": quest.get("seed"),
+                "best_status": best["status"] if best else None,
+                "best_title": (best.get("hypothesis") or {}).get("title") if best else None}
             self._write(data)
             return {"outcome": outcome, "champion": json.loads(json.dumps(data["champions"].get(subject)))}
+
+    def last(self, subject: str) -> dict | None:
+        """The most recent quest's outcome for this subject, whether or not it crowned anyone."""
+        with self.lock:
+            rec = self._read().get("last", {}).get(subject)
+            return json.loads(json.dumps(rec)) if rec else None
 
     @staticmethod
     def _entry(r: dict, quest: dict, now: str, event: str) -> dict:

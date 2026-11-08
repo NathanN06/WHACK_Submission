@@ -32,6 +32,16 @@ QUESTS = ROOT / "data" / "quests"
 DB = ROOT / "data" / "whack.duckdb"
 
 app = FastAPI(title="Hypothesis Gauntlet")
+
+
+@app.middleware("http")
+async def revalidate_the_ui(request, call_next):
+    """The game's scripts change between versions: make the browser re-check them (a cheap 304 when unchanged)
+    instead of running a stale copy that knows nothing about, say, champions."""
+    response = await call_next(request)
+    if not request.url.path.startswith("/api/"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
 _runs: dict[str, dict] = {}
 _quests: dict[str, dict] = {}
 _frames = None
@@ -351,7 +361,8 @@ def campaigns():
     return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
              "comparator": c.comparator, "target": c.outcomes[0].label, "scrolls": [s.title for s in c.scrolls],
              "simulated": True, "min_scrolls": MIN_SCROLLS, "max_scrolls": MAX_SCROLLS,
-             "real_evidence": EVIDENCE_DB.exists(), "champion": _card(champs.get(c.id))} for c in CAMPAIGNS.values()]
+             "real_evidence": EVIDENCE_DB.exists(), "champion": _card(champs.get(c.id)),
+             "last_quest": store.last(c.id)} for c in CAMPAIGNS.values()]
 
 
 @app.get("/api/champions")

@@ -43,7 +43,7 @@ async function boot() {
   } catch { G.server = false; }
   try {
     if (!G.server) throw new Error("static");
-    G.campaigns = await fetch("/api/campaigns").then((r) => r.json());
+    G.campaigns = await fetch("/api/campaigns", { cache: "no-store" }).then((r) => r.json());
   } catch {
     G.campaigns = [];
     for (const L of FALLBACK_CAMPAIGNS) {
@@ -67,13 +67,32 @@ async function boot() {
 }
 
 // The reigning champion of a campaign, shown before a repeat quest: its historical result is context, not new evidence.
-function championCard(ch) {
-  if (!ch) return "";
+// Without one, the card still says so, and what the last quest found.
+const DEFENSE = { CROWNED: "crowned", DEFENDED: "defended its title", REPLACED: "won the title from the previous champion",
+                  UNRESOLVED: "kept its title, not re-confirmed", NOT_CONTESTED: "was not contested" };
+function championCard(ch, last) {
+  if (!ch) {
+    const what = !last ? "No live quest has been played yet. Support a claim to crown the first champion."
+      : last.outcome === "DETHRONED" ? "The last champion was contradicted on a fresh cohort and lost its title."
+      : `Last quest: no claim was supported (best: ${statusLabel(last.best_status) || "none"}).`;
+    return `<span class="champ-badge none"><b>NO CHAMPION YET</b><small>${esc(what)}</small></span>`;
+  }
   const confirmed = ch.confirmations ? `${ch.confirmations} independent confirmation${ch.confirmations === 1 ? "" : "s"}` : "not independently confirmed";
+  const lastLine = last && last.outcome && DEFENSE[last.outcome] ? ` Last quest: ${DEFENSE[last.outcome]}.` : "";
   return `<span class="champ-badge" title="${esc(ch.label || "")}"><b>INCUMBENT · Previous campaign winner</b>
       <span>${esc(ch.title || "")}: ${esc(ch.claim || "")}</span>
       <span class="status s-${esc(ch.status_now || ch.status || "")}">${esc(statusLabel(ch.status_now || ch.status))}</span>
-      <small>${esc(confirmed)} · ${esc(ch.label || "Simulated cohort: not clinical evidence.")} Fresh challengers will face it.</small></span>`;
+      <small>${esc(confirmed)}.${esc(lastLine)} Fresh challengers will face it next quest. ${esc(ch.label || "Simulated cohort: not clinical evidence.")}</small></span>`;
+}
+
+// Champions change at the end of every live quest, so the cards are reloaded whenever the title screen comes back.
+async function refreshCampaigns() {
+  if (!G.server) return;
+  try {
+    G.campaigns = await fetch("/api/campaigns", { cache: "no-store" }).then((r) => r.json());
+    renderCards();
+    syncCount();
+  } catch { /* keep the cards already shown */ }
 }
 
 function renderCards() {
@@ -83,7 +102,7 @@ function renderCards() {
       <strong>${esc(c.title)}</strong>
       <span class="card-q">${esc(c.question)}</span>
       <span class="card-meta">${esc(c.drug)} vs ${esc((c.comparator || "").replace(/ \(active comparator\)/, ""))} <em>SIMULATED</em></span>
-      ${championCard(c.champion)}
+      ${G.server ? championCard(c.champion, c.last_quest) : ""}
     </button>`).join("");
   for (const b of document.querySelectorAll(".card")) {
     b.onclick = () => {
@@ -169,6 +188,7 @@ function exitGame() {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   $("screen-game").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-title").hidden = false;
   history.replaceState(null, "", location.pathname);
+  refreshCampaigns();   // a champion may have been crowned, defended or replaced this round
 }
 
 // ---------- playback ----------
@@ -232,6 +252,8 @@ function onEvent(e) {
     }
   }
   if (e.action === "gatekeeper" || e.action === "benchmark") speak(e.result.text, e.action === "benchmark");
+  if (e.action === "skeptic_start") { banner("The Skeptic", "One more test for every claim still standing"); shakeStage(300, 1); }
+  if (e.action === "withdraw") banner(`${s.agents[e.agent_id]?.name || "A scroll"} is withdrawn`, "Set aside before the Guardian");
   if (e.action === "level_complete") {
     showLevelDone(e.result);
     if (G.interactive) directorPost("advance", { level: e.result.level }).catch(() => {});  // the quest may compute the next level
@@ -300,12 +322,46 @@ function stageLoop() {
   const frame = (now) => {
     if (!$("screen-game").hidden) {
       step(now);
+      renderWaiting(now);
       drawStage(ctx, now);
       G.f++;
     }
     requestAnimationFrame(frame);
   };
   requestAnimationFrame(frame);
+}
+
+// ---------- never a silent screen: say what the live expedition is waiting for ----------
+
+function waitingText(s) {
+  const ex = s.execution || {}, last = s.events[s.events.length - 1];
+  const think = (who) => (ex[who] === "LIVE_CLAUDE" ? " (Claude is thinking)" : "");
+  if (!last) return "Opening the campaign";
+  const a = last.action, r = last.result || {};
+  if (a === "quest_start") return `The Scribe is drafting hypotheses from the real literature${think("scribe")}`;
+  if (a === "level_complete") {
+    return r.level >= 4 ? `The Skeptic is choosing a test for every claim still standing${think("skeptic")}`
+                        : `The Alchemist is planning Level ${ROMAN[r.level + 1]}${think("hero")}`;
+  }
+  if (["planning", "level_start", "gatekeeper"].includes(a)) return `The Alchemist is choosing abilities for Level ${ROMAN[s.level] || ""}${think("hero")}`;
+  if (a === "skeptic_start") return `The Skeptic is choosing its tests${think("skeptic")}`;
+  if (/^skeptic/.test(a)) return "The Judge is running the Skeptic's test";
+  if (a === "chat" || a === "hero_reply" || /^mystery/.test(a)) return "The expedition resumes";
+  return "The Judge is measuring";
+}
+
+function renderWaiting(now) {
+  const el = $("tick-wait");
+  const idle = G.mode === "live" && !G.done && G.running && !G.hold && !G.pending.length && G.state.events.length > 0;
+  if (!idle) { G.idleSince = null; G.waiting = false; if (!el.hidden) el.hidden = true; return; }
+  if (G.idleSince == null) G.idleSince = now;
+  const waited = now - G.idleSince;
+  G.waiting = waited > 600;
+  if (!G.waiting) return;
+  const secs = Math.floor(waited / 1000);
+  const html = `<span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>${esc(waitingText(G.state))}${secs >= 2 ? ` <small>${secs} s</small>` : ""}`;
+  if (el._html !== html) { el.innerHTML = html; el._html = html; }
+  el.hidden = false;
 }
 
 function aura(ctx, x, y, r, rgb, k) {
@@ -359,6 +415,15 @@ function drawStage(ctx, now) {
   const hero = pepSprite("Alchemist");
   const hb = G.reduced ? 0 : Math.round(Math.sin(G.f / 16) * 0.6);
   ctx.save(); ctx.translate(HERO[0], HERO[1] + hb); ctx.scale(3, 3); blit(ctx, hero, 0, 0); ctx.restore();
+  // a thought bubble while the hero (or the Judge) is working and nothing new has arrived yet
+  if (G.waiting) {
+    const bx = HERO[0] + 12, by = HERO[1] - 60 + hb;
+    rect(ctx, bx, by, 24, 10, "#f3e9d2"); rect(ctx, bx + 1, by + 10, 3, 2, "#f3e9d2"); rect(ctx, bx - 2, by + 13, 2, 2, "#f3e9d2");
+    for (let k = 0; k < 3; k++) {
+      const on = G.reduced || Math.floor(now / 300) % 4 > k;
+      rect(ctx, bx + 5 + k * 6, by + 4, 2, 2, on ? "#3b2559" : "#c9bfae");
+    }
+  }
   // a thread of light from the flask to the scroll under test
   const fid = s.fighter && s.enemy && s.agents[s.fighter] && s.agents[s.fighter].status === "active" ? s.fighter : null;
   const fp = fid && G.pos[fid];
@@ -382,6 +447,10 @@ function drawStage(ctx, now) {
     const hk = G.reduced ? 1e9 : now - (G.hitAt[id] || -1e9);          // knocked back by a hit
     const x = Math.round(p.x - (hk >= 0 && hk < 320 ? Math.sin(hk / 320 * Math.PI) * 9 : 0));
     const fy0 = Math.round(p.y - (ch >= 0 && ch < 820 ? Math.abs(Math.sin(ch / 820 * 2 * Math.PI)) * 8 : 0));
+    if (a.status === "withdrawn") {   // set aside by the hero, not destroyed: drawn faded where it stands
+      ctx.save(); ctx.globalAlpha = 0.35; ctx.translate(x, fy0); ctx.scale(2, 2); blit(ctx, scrollSprite(a.archetype), 0, 0); ctx.restore();
+      return;
+    }
     if (a.status !== "active") {
       ctx.save(); ctx.translate(x, fy0 + 4); ctx.scale(2, 2); drawAsh(ctx, 0, 0); ctx.restore();
       return;

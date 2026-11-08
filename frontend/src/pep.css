@@ -521,3 +521,16 @@ ul.manifest li { padding: 2px 0; border-bottom: 1px dotted #ddd; }
 ul.manifest .src { display: inline-block; min-width: 190px; color: #6a6480; }
 .trial-card.o-NONEWINDEPENDENTCONFIRMATION { box-shadow: inset 0 0 0 3px #cfe6ff; }
 .ow-verdict.o-NONEWINDEPENDENTCONFIRMATION { background: #eef4fd; border-color: #6a8ac0; }
+
+/* ---------- never a silent screen: what the live expedition is waiting for ---------- */
+.tick-wait { margin: 6px 0 0; font-size: 14px; color: var(--gold-lit); display: flex; align-items: center; gap: 8px; }
+.tick-wait small { color: var(--muted); font-variant-numeric: tabular-nums; }
+.tick-wait .dots { display: inline-flex; gap: 3px; }
+.tick-wait .dots i { width: 5px; height: 5px; background: var(--gold); animation: wait-dot 1.2s steps(1) infinite; }
+.tick-wait .dots i:nth-child(2) { animation-delay: .2s; }
+.tick-wait .dots i:nth-child(3) { animation-delay: .4s; }
+@keyframes wait-dot { 0%, 100% { opacity: .25; } 40% { opacity: 1; } }
+@media (prefers-reduced-motion: reduce) { .tick-wait .dots i { animation: none; opacity: .8; } }
+body.reduced .tick-wait .dots i { animation: none; opacity: .8; }
+.champ-badge.none { box-shadow: inset 0 0 0 1px var(--purple); background: rgba(107, 63, 160, .12); }
+.champ-badge.none b { color: var(--muted); }

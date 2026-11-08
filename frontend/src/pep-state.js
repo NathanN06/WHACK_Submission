@@ -251,7 +251,7 @@ function beat(e) {
            bridge_enter: 2600, self_assessment: 600, bridge_choice: 1200, evolution_start: 1500, evolution_transform: 2600,
            evolution_step: 1500, evolution_complete: 1800, spec_locked: 1800, trial_result: 3600,
            analysis_plan: 1600, withdraw: 1700, skeptic_start: 1800, skeptic_challenge: 1500, skeptic_result: 1800,
-           scientific_status: 900, champion: 2000 }[e.action] || 500;
+           scientific_status: 900, champion: 2000, planning: 900 }[e.action] || 500;
 }
 
 // The scientific status as a short label, kept apart from HP and the game verdict.

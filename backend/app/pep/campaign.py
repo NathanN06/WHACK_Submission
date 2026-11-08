@@ -14,6 +14,7 @@ import json
 import math
 import threading
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -149,6 +150,9 @@ class PepQuest:
         self.science: dict | None = None
         self.champion_result: dict | None = None
         self.formation: dict | None = None
+        self._executor: ThreadPoolExecutor | None = None   # Claude's calls, run in parallel (only when Claude plays)
+        self._prefetched: dict = {}                         # level -> {scroll id: (payload fingerprint, future)}
+        self._skeptic_pre: tuple | None = None
 
     # ---------- the whole run ----------
 
@@ -159,6 +163,9 @@ class PepQuest:
             for level in (1, 2, 3, 4):
                 with self.lock:
                     self.play_level(level)
+                    # While the screen is still showing this level, Claude already plans the next one. The plans are
+                    # used only if nothing changed meanwhile (a Mystery Boss, say); otherwise they are asked again.
+                    self._prefetch(level + 1) if level < 4 else self._prefetch_skeptic()
                 if self.director is not None:
                     self.director.checkpoint(level)  # wait until the screen has shown this level
             with self.lock:
@@ -176,9 +183,84 @@ class PepQuest:
                 self.ledger.write(level=self.level, actor="system", action="error",
                                   line=f"The expedition was halted: {e!r}"[:300])
             return None
+        finally:
+            if self._executor is not None:
+                self._executor.shutdown(wait=False, cancel_futures=True)
 
     def stop(self) -> None:
         self._stop = True
+
+    # ---------- planning ahead: Claude's calls run in parallel, and one level early ----------
+
+    @property
+    def live(self) -> bool:
+        """Claude plays the hero (its decisions take seconds, so they are worth running in parallel and ahead)."""
+        return getattr(self.brain, "complete", None) is not None
+
+    def _pool(self) -> ThreadPoolExecutor:
+        if self._executor is None:
+            self._executor = ThreadPoolExecutor(max_workers=6, thread_name_prefix=f"plan-{self.run_id}")
+        return self._executor
+
+    def _plan(self, a: Agent, level: int) -> tuple:
+        """(menu, payload, blocked, fingerprint): what the hero would see if it decided for this scroll now."""
+        menu = menu_for(a, level)
+        try:   # what the hero may see: blinded telemetry and earlier findings, re-checked by the leak guard
+            payload, blocked = T.planning_payload(self, a, level, menu), None
+        except T.LeakError as e:
+            payload, blocked = None, str(e)
+        fp = hashlib.sha256(json.dumps({"menu": list(menu), "payload": payload, "blocked": blocked, "status": a.status},
+                                       sort_keys=True, default=str).encode()).hexdigest()
+        return menu, payload, blocked, fp
+
+    def _prefetch(self, level: int) -> None:
+        if not self.live:
+            return
+        self._prefetched[level] = {}
+        for a in self._active():
+            menu, payload, blocked, fp = self._plan(a, level)
+            if payload is not None:
+                self._prefetched[level][a.id] = (fp, self._pool().submit(self.brain.choose, a, level, menu, payload))
+
+    def _choose_all(self, level: int, agents: list) -> dict:
+        """Every scroll's decision for this level, in recruitment order: a prefetched one if the scroll's planning
+        payload is unchanged, otherwise asked now (all at once when Claude plays)."""
+        plans = {a.id: self._plan(a, level) for a in agents}
+        pre = self._prefetched.pop(level, {})
+        ready = {a.id: pre[a.id][1] for a in agents if a.id in pre and pre[a.id][0] == plans[a.id][3]}
+        todo = [a for a in agents if a.id not in ready]
+        if todo and self.live:
+            self._emit(actor="system", action="planning",
+                       line=f"The Alchemist weighs the blinded evidence for {len(todo)} scroll{'s' if len(todo) > 1 else ''}.",
+                       explain="Claude is choosing abilities for every scroll at once, from outcome-free design flags and "
+                               "the Judge's earlier findings.",
+                       result={"level": level, "scrolls": [a.id for a in todo], "prefetched": sorted(ready)})
+            for a in todo:
+                menu, payload = plans[a.id][:2]
+                ready[a.id] = self._pool().submit(self.brain.choose, a, level, menu, payload)
+        decisions = {}
+        for a in agents:
+            menu, payload, blocked, _ = plans[a.id]
+            if a.id in ready:
+                try:
+                    d = ready[a.id].result()
+                except Exception:  # a thread that failed outright: the script decides, in this thread
+                    d = self.brain.choose(a, level, menu, payload)
+            else:
+                d = self.brain.choose(a, level, menu, payload)
+            decisions[a.id] = (menu, payload, blocked, d)
+        return decisions
+
+    def _prefetch_skeptic(self) -> None:
+        if self.skeptic_llm is None:
+            return
+        active = self._active()
+        if active:
+            self._skeptic_pre = (self._skeptic_key(active), self._pool().submit(SK.choose, active, self.skeptic_llm))
+
+    @staticmethod
+    def _skeptic_key(agents: list) -> tuple:
+        return tuple((a.id, a.hp, a.status, a.st.design, a.st.adjusted, a.st.K, a.st.replicated) for a in agents)
 
     def start(self) -> None:
         c, w = self.c, self.w
@@ -271,8 +353,9 @@ class PepQuest:
         target = next((a for a in self._active() if a.archetype == "HYPE"), None) or (self._active() or [None])[0]
         if target:
             self._gate(level, self.c.gatekeeper[level].format(scroll=target.name))
-        for a in self._active():
-            self.decide(a, level)
+        agents = self._active()
+        for a_id, (menu, payload, blocked, d) in self._choose_all(level, agents).items():
+            self._apply_decision(self.agents[a_id], level, menu, payload, blocked, d)
         for a in self._active():
             a.m[level] = self.measure(a, level)
         for enemy in rules.ENEMIES[level]:
@@ -288,12 +371,12 @@ class PepQuest:
         self.after_level(level)
 
     def decide(self, a: Agent, level: int) -> None:
-        menu = menu_for(a, level)
-        try:   # what the hero may see: blinded telemetry and earlier findings, re-checked by the leak guard
-            payload, blocked = T.planning_payload(self, a, level, menu), None
-        except T.LeakError as e:
-            payload, blocked = None, str(e)
-        d: Decision = self.brain.choose(a, level, menu, payload)
+        """One scroll's decision, asked and applied now."""
+        menu, payload, blocked, _ = self._plan(a, level)
+        self._apply_decision(a, level, menu, payload, blocked, self.brain.choose(a, level, menu, payload))
+
+    def _apply_decision(self, a: Agent, level: int, menu: dict, payload: dict | None, blocked: str | None,
+                        d: Decision) -> None:
         picks = [k for k in d.abilities if k in menu]
         cost = sum(rules.ABILITIES[k]["cost"] for k in picks)
         if cost > a.credits:  # a hard rule, not a choice
@@ -653,18 +736,26 @@ class PepQuest:
         if not active:
             return
         self.level = 5
-        picks, trace = SK.choose(active, self.skeptic_llm)
+        # announce first, so the screen is never silent while the Skeptic chooses
         self._emit(actor="system", action="skeptic_start",
                    line="The Skeptic blocks the way to the Bridge: one more test for every claim still standing.",
                    explain="Each test comes from the registered challenge registry and runs on the training years only. "
                            "It changes no HP and no number: it is a robustness check the Bridge and the report disclose.",
-                   result={"execution": trace, "speaker": "skeptic"})
+                   result={"speaker": "skeptic", "scrolls": [a.id for a in active]})
+        pre, self._skeptic_pre = self._skeptic_pre, None
+        if pre is not None and pre[0] == self._skeptic_key(active):
+            try:
+                picks, trace = pre[1].result()   # chosen while the screen was still showing Level IV
+            except Exception:
+                picks, trace = SK.choose(active, self.skeptic_llm)
+        else:
+            picks, trace = SK.choose(active, self.skeptic_llm)
         for ch in picks:
             a = self.agents[ch["scroll_id"]]
             kind = ch["challenge_type"]
             self._emit(actor="system", action="skeptic_challenge", agent=a,
                        line=f"Skeptic: \"{ch['critique'] or C.ARCHETYPES[kind]['question']}\"",
-                       explain=ch["reason"], result={"challenge": ch, "speaker": "skeptic",
+                       explain=ch["reason"], result={"challenge": ch, "speaker": "skeptic", "execution": trace,
                                                      "test": C.ARCHETYPES[kind]["test"]})
             if not ch["can_test_with_available_data"] or ch["risk_of_data_leakage"] == "HIGH":
                 res = C.unresolved("The Skeptic judged this challenge untestable on the training years without leakage.")

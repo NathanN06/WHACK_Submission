@@ -1,5 +1,7 @@
 # WHACK_Submission
 
+https://drive.google.com/file/d/1hBc-9XsDW2u1nPB54zo3ZmzCCmPHL_BW/view?usp=sharing <- Link to the video demonstration of our project.
+
 **An AI researcher that tests its own ideas — and can tell a real discovery from a lucky one.**
 
 Finding patterns in data is easy; knowing which ones to trust is hard. This project generates hypotheses from a dataset (markets, sport, medicine, online experiments…), then stress-tests each one before calling it a discovery.

@@ -1,0 +1,168 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hypothesis Gauntlet: Peptide & GLP-1</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Jersey+10&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="pep.css">
+</head>
+<body>
+  <!-- Title: the campaign selector -->
+  <section class="screen title" id="screen-title">
+    <canvas class="pixel full" id="title-canvas" width="320" height="180" aria-hidden="true"></canvas>
+    <div class="title-copy">
+      <h1>Hypothesis<br>Gauntlet</h1>
+      <p class="edition">Peptide &amp; GLP-1 Discovery</p>
+      <p class="tag">The Alchemist-Epidemiologist carries three hypothesis scrolls about peptides and GLP-1 drugs
+        through four dungeons of hype, rat studies, p-hacking and immortal time. A deterministic Statistical Judge measures
+        every claim and applies fixed damage rules. Only a scroll that predicts unseen patients better than the
+        Gatekeeper's active-comparator baseline walks out of the Citadel.</p>
+    </div>
+    <div class="selector frame">
+      <h2>Choose a campaign</h2>
+      <div class="cards" id="cards" role="radiogroup" aria-label="Campaign"></div>
+      <div class="menu-row">
+        <label class="llm-toggle" id="llm-wrap" hidden><input type="checkbox" id="llm"> Claude plays the Alchemist</label>
+        <div class="menu-buttons">
+          <button class="btn gold" id="begin">Begin the campaign</button>
+          <button class="btn" id="demo">Watch the recorded run</button>
+          <button class="btn ghost" id="how">How it works</button>
+        </div>
+      </div>
+      <p class="who" id="who">Checking the server…</p>
+    </div>
+  </section>
+
+  <!-- The game: split-brain layout -->
+  <section class="screen game" id="screen-game" hidden>
+    <div class="split">
+      <div class="left">
+        <nav class="nodes frame" aria-label="Progress">
+          <ol id="nodes"></ol>
+          <span class="sim-badge" title="A synthetic world with planted, known effects. Not real findings and not medical advice.">SIMULATED</span>
+        </nav>
+
+        <div class="stage frame">
+          <canvas class="pixel" id="stage" width="320" height="180" aria-label="The battle stage"></canvas>
+          <div class="hud" id="hud" hidden></div>
+          <div class="enemy-plate" id="enemy-plate" hidden></div>
+          <div class="gate-bubble" id="gate-bubble" role="status" hidden></div>
+          <div class="banner" id="banner" hidden></div>
+          <button class="btn gold challenge-btn" id="challenge" title="Pause the expedition and talk to the hero (C)">Challenge the Hero</button>
+          <div class="secret-badge" id="secret-badge" hidden></div>
+        </div>
+
+        <ol class="party" id="party" aria-label="The Alchemist and the three scrolls"></ol>
+
+        <section class="console frame" aria-label="Combat console">
+          <div class="ticker" aria-live="polite">
+            <p class="tick-line" id="tick-line">The Alchemist gathers three scrolls at the gate.</p>
+            <p class="tick-explain" id="tick-explain"></p>
+          </div>
+          <div class="controls" role="group" aria-label="Playback">
+            <button class="btn small" id="run" aria-pressed="true" title="Space">Pause</button>
+            <button class="btn small speed" data-speed="1" aria-pressed="true">1×</button>
+            <button class="btn small speed" data-speed="2" aria-pressed="false">2×</button>
+            <button class="btn small speed" data-speed="4" aria-pressed="false">4×</button>
+            <button class="btn small" id="step" title="Advance one ruling (pauses)">Step</button>
+            <button class="btn small" id="skip" title="Play the rest of this level instantly">Skip level</button>
+            <button class="btn small ghost" id="motion" aria-pressed="false" title="Turn off shaking, flashes and lunges">Reduce motion</button>
+            <button class="btn small ghost" id="tutorial-btn">Tutorial</button>
+            <button class="btn small ghost" id="exit" title="Stop this campaign and go back to the selector">Exit</button>
+          </div>
+        </section>
+      </div>
+
+      <div class="right">
+        <section class="inspector frame" id="inspector" aria-label="Test Inspector">
+          <header><h2>Test Inspector</h2><span id="insp-id" class="enc-id"></span></header>
+          <div id="insp-body"><p class="muted">When the Judge runs a test, the test, its numbers, a chart of the data it
+            used and the exact formula appear here. Click any ledger row to inspect it.</p></div>
+        </section>
+        <section class="ledger frame" aria-label="Evidence ledger">
+          <header><h2>Evidence Ledger</h2><small id="ledger-count"></small></header>
+          <div class="filters">
+            <select id="f-agent" aria-label="Filter by scroll"><option value="">Everyone</option></select>
+            <select id="f-level" aria-label="Filter by level"><option value="">All levels</option>
+              <option value="1">I</option><option value="2">II</option><option value="3">III</option><option value="4">IV</option></select>
+            <select id="f-kind" aria-label="Filter by kind"><option value="">Everything</option>
+              <option value="judge">Judge rulings</option><option value="agent">Hero choices</option><option value="hp">HP changes</option>
+              <option value="director">Director &amp; mysteries</option></select>
+            <input id="f-text" type="search" placeholder="Search" aria-label="Search the ledger">
+          </div>
+          <div class="table-wrap"><table id="ledger"><thead><tr><th>#</th><th>Lv</th><th>Who</th><th>What happened</th><th>HP</th></tr></thead><tbody></tbody></table></div>
+        </section>
+      </div>
+    </div>
+  </section>
+
+  <!-- Endgame: the Alchemist's laboratory and the Research Decision Brief -->
+  <section class="screen room" id="screen-room" hidden>
+    <div class="room-scene">
+      <canvas class="pixel" id="room-canvas" width="320" height="180" aria-label="The Alchemist's laboratory"></canvas>
+      <div class="room-headline" id="room-headline"></div>
+    </div>
+    <article class="brief" id="brief"></article>
+  </section>
+
+  <!-- The Bridge of Judgment: the hero's self-assessment, the Director's choice, Evolution and the Trial of Truth -->
+  <section class="screen bridge-screen" id="screen-bridge" hidden>
+    <div class="bridge-scene frame">
+      <canvas class="pixel" id="bridge-canvas" width="320" height="180" aria-label="The Bridge of Judgment"></canvas>
+      <div class="bridge-title" id="bridge-title"><h2>The Bridge of Judgment</h2></div>
+      <div class="banner" id="bridge-banner" hidden></div>
+    </div>
+    <div class="bridge-panel">
+      <section class="frame bridge-speech" id="bridge-speech" aria-live="polite"></section>
+      <section class="frame bridge-review" id="bridge-review"></section>
+      <section class="frame bridge-log" id="bridge-log"><header><h3>On the bridge</h3></header><ol id="bridge-events"></ol></section>
+    </div>
+  </section>
+
+  <!-- CHALLENGE THE HERO: the Research Director's console -->
+  <dialog id="chat-dlg" class="frame chat-dlg" aria-labelledby="chat-title">
+    <header class="chat-head">
+      <img id="chat-portrait" alt="" width="64" height="64">
+      <div><h2 id="chat-title">Challenge the Hero</h2>
+        <p class="chat-q"><b>Research question</b> <span id="chat-question"></span></p>
+        <p class="chat-q"><b>Active hypothesis</b> <span id="chat-hypothesis"></span></p></div>
+      <button class="btn small ghost" id="chat-close" aria-label="Close and resume">Resume ▶</button>
+    </header>
+    <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
+    <div class="chat-offer" id="chat-offer" hidden></div>
+    <form class="chat-form" id="chat-form">
+      <div class="modes" role="radiogroup" aria-label="Interaction mode">
+        <button type="button" class="btn small mode" data-mode="ASK" aria-pressed="true" title="Ask the hero to explain its reasoning">Ask</button>
+        <button type="button" class="btn small mode" data-mode="CHALLENGE" aria-pressed="false" title="Dispute a claim or an assumption">Challenge</button>
+        <button type="button" class="btn small mode" data-mode="ADD_EVIDENCE" aria-pressed="false" title="Bring a link, a file or a claim the hero has not seen">Add evidence</button>
+        <button type="button" class="btn small mode" data-mode="NEW_HYPOTHESIS" aria-pressed="false" title="Suggest another explanation">New hypothesis</button>
+        <button type="button" class="btn small mode" data-mode="SUMMON" aria-pressed="false" title="Turn a testable challenge into a boss fight">Summon mystery boss</button>
+      </div>
+      <div class="chat-row">
+        <label>Scroll <select id="chat-target"></select></label>
+        <input id="chat-url" type="url" placeholder="Paper, dataset or article link (optional)" aria-label="Link">
+        <label class="file-btn">File <input id="chat-file" type="file" accept=".csv,.tsv,.txt,.json,.md,.pdf"></label>
+      </div>
+      <div class="chat-row"><textarea id="chat-text" rows="2" maxlength="2000" placeholder="Ask, challenge or tell the hero something…" aria-label="Message"></textarea>
+        <button class="btn gold" id="chat-send" type="submit">Send</button></div>
+      <p class="muted small" id="chat-note"></p>
+    </form>
+  </dialog>
+
+  <dialog id="level-done" class="frame"></dialog>
+  <dialog id="how-dlg" class="frame"></dialog>
+  <dialog id="tutorial" class="frame"></dialog>
+
+  <script src="pep-state.js"></script>
+  <script src="sprites.js"></script>
+  <script src="worlds.js"></script>
+  <script src="pep-charts.js"></script>
+  <script src="pep.js"></script>
+  <script src="pep-brief.js"></script>
+  <script src="pep-mystery-sprites.js"></script>
+  <script src="pep-director.js"></script>
+  <script src="pep-bridge.js"></script>
+</body>
+</html>

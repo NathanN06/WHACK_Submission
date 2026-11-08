@@ -1,1 +1,10 @@
 duckdb>=1.1
+pandas
+numpy
+scikit-learn
+pydantic>=2
+fastapi
+uvicorn
+httpx
+anthropic
+pytest

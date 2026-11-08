@@ -26,6 +26,7 @@ HOLDOUT_END = 1450          # 1100 <= index < 1450: the vaulted Level 4 holdout;
 SITES = [("North Metro Health", False), ("River Valley Medical", False), ("Coastal Clinic Network", False),
          ("Prairie Rural Health", True), ("Mountain Rural Health", True)]
 SUBGROUPS = ["everyone", "under 50", "50 and over", "women", "men", "higher severity", "lower severity"]
+SUBGROUP_MIN_INITIATORS = 150   # a claim about a subgroup needs at least this many new users in the training years
 
 
 @dataclass
@@ -52,6 +53,8 @@ class Literature:
     in_vitro: int = 0
     labs: tuple = (1.0,)                        # share of papers from each lab
     records: list | None = None                 # REAL papers (hypotheses.py): species and lab of each, used as they are
+    queries: list | None = None                 # the stored queries that found them, with when they were fetched
+    trials: list | None = None                  # REAL completed randomized trials registered on the topic
 
 
 @dataclass
@@ -72,6 +75,18 @@ class Scroll:
     origin: str = ""        # where the scroll was found
     evidence_topic: str = ""    # the real evidence topic its papers and trials come from (hypotheses.py)
     evidence_real: bool = False
+    # The typed hypothesis: what the Judge actually tests. The claim text must describe exactly this.
+    direction: int = 0          # claimed effect on the outcome event: -1 lowers it, +1 raises it (0: the campaign's)
+    subgroup: str = "everyone"  # the population the claim is about (one of SUBGROUPS, with enough support)
+    threat: str = "unknown"     # the bias the scroll's author fears most (primary_threat_hypothesis)
+    falsifier: str = ""         # in words: what result would show the claim is wrong (no observed statistics)
+    # Lineage (hypotheses.py, champions.py): immutable once formed; a revision is a new version with a parent.
+    hypothesis_id: str = ""
+    version: int = 1
+    parent_id: str | None = None
+    origin_mode: str = "HAND_WRITTEN"   # HAND_WRITTEN | SCRIBE_CLAUDE | SCRIBE_SCRIPT | INCUMBENT
+    question_key: str = ""      # normalized research question (campaign, outcome, subgroup, direction, ...)
+    incumbent: dict | None = None   # the previous champion's historical record (context, never new evidence)
 
 
 @dataclass
@@ -189,6 +204,27 @@ class World:
 
     def mask(self, split: str) -> np.ndarray:
         return self.split == split
+
+    def support(self, subgroup: str) -> dict:
+        """How many training-year patients a subgroup claim could be tested on. Exposure only, never outcomes."""
+        if subgroup not in SUBGROUPS:
+            return {"subgroup": subgroup, "supported": False, "reason": "not a variable this cohort records"}
+        m = self.mask("train") & self.subgroup(subgroup)
+        initiators = int((m & (self.start < 180)).sum())
+        comparators = int((m & ~self.peptide).sum())
+        ok = min(initiators, comparators) >= SUBGROUP_MIN_INITIATORS
+        return {"subgroup": subgroup, "supported": ok, "initiators": initiators, "comparators": comparators,
+                "reason": None if ok else f"fewer than {SUBGROUP_MIN_INITIATORS} new users or comparators"}
+
+    def fingerprint(self) -> str:
+        """Identifies this synthetic cohort (campaign, seed, size and calendar split): one sealed vault each.
+
+        The planted effects are deliberately left out, so the fingerprint can never be used to guess them."""
+        import hashlib
+        import json
+        spec = {"campaign": self.c.id, "seed": self.seed, "n": self.c.n, "days": DAYS, "train_end": TRAIN_END,
+                "holdout_end": HOLDOUT_END}
+        return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()[:16]
 
     # ---------- the other sources ----------
 

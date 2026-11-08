@@ -110,6 +110,9 @@ def test_claude_is_used_automatically_when_a_key_exists(client, monkeypatch):
 @pytest.fixture
 def quest_client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "QUESTS", tmp_path)
+    # hermetic: never call Claude from the tests, even when a real key sits in .env
+    monkeypatch.setattr(main, "llm_available", lambda: False)
+    monkeypatch.setattr(main, "client_or_none", lambda use: None)
     return TestClient(main.app)
 
 
@@ -134,6 +137,22 @@ def test_a_quest_streams_to_the_finale_and_replays(quest_client):
     rules = quest_client.get("/api/quests-rules").json()
     assert rules["d_max"]["4"] == 60 and rules["starting_hp"] == 100
     assert [c["letter"] for c in quest_client.get("/api/campaigns").json()] == ["A", "B", "C", "D"]
+
+
+def test_live_quests_get_fresh_cohorts_and_a_champion_defends_its_title(quest_client):
+    assert quest_client.post("/api/quests", json={"campaign": "A", "scrolls": 1}).status_code == 422   # never one scroll
+    assert quest_client.get("/api/champions").json() == {}
+    first = wait_for_quest(quest_client, quest_client.post("/api/quests", json={"campaign": "A", "llm": False,
+                                                                                "scrolls": 3}).json()["quest_id"])
+    second = wait_for_quest(quest_client, quest_client.post("/api/quests", json={"campaign": "A", "llm": False,
+                                                                                 "scrolls": 3}).json()["quest_id"])
+    seeds = [q[0]["result"]["cohort"]["seed"] for q in (first, second)]
+    assert seeds == [1, 2] and all(q[0]["result"]["cohort"]["fresh"] for q in (first, second))   # never the demo's seed 0
+    champ = quest_client.get("/api/champions").json()["GLP1_ADDICTION"]
+    assert second[0]["result"]["incumbent"]["hypothesis_id"] == champ["hypothesis"]["hypothesis_id"]
+    assert next(e for e in second if e["action"] == "champion")["result"]["outcome"] in ("DEFENDED", "REPLACED", "UNRESOLVED")
+    card = next(c for c in quest_client.get("/api/campaigns").json() if c["letter"] == "A")["champion"]
+    assert card and card["title"] and "not clinical evidence" in card["label"].lower()
 
 
 def test_unknown_campaigns_and_paths_are_refused(quest_client, tmp_path):

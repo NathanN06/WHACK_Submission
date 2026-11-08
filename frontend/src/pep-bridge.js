@@ -60,9 +60,11 @@ function bridgeEvent(e) {
       BR.outcome = r.trial.outcome; BR.crossed = !!r.trial.crossed; BR.phase = "verdict"; BR.t0 = performance.now();
       BR.kind = verdictKind(BR.outcome, BR.crossed); BR.verdictX = BR.heroX;
       $("bridge-banner").className = `banner bridge-verdict v-${BR.kind}`;
-      bridgeBanner(r.trial.outcome, { win: "The path lights up. The hero crosses into the Overworld",
-                                      honest: "No discovery claimed. The hero carries an honest report across",
-                                      escape: "The bridge breaks behind the hero", fall: "The bridge gives way" }[BR.kind]);
+      bridgeBanner(r.trial.outcome, r.trial.outcome === "NO NEW INDEPENDENT CONFIRMATION"
+        ? "The claim held on a vault already opened: nothing new is confirmed"
+        : { win: "The path lights up. The hero crosses into the Overworld",
+            honest: "No discovery claimed. The hero carries an honest report across",
+            escape: "The bridge breaks behind the hero", fall: "The bridge gives way" }[BR.kind]);
       renderTrial(r.trial);
       if (!G.pinned) inspect(e);
       break;
@@ -165,8 +167,10 @@ function renderTrial(t) {
   $("bridge-review").insertAdjacentHTML("afterbegin", `<div class="trial-card o-${t.outcome.replace(/\s/g, "")}">
     <small>THE TRIAL OF TRUTH</small><strong>${esc(t.outcome)}</strong><p>${esc(t.line)}</p>
     ${t.evaluated ? `<p class="muted small">Locked spec ${esc((t.sha256 || "").slice(0, 12))}: ${esc(t.spec.claim)} · stance ${esc(t.spec.stance)} ·
-      design ${esc(t.spec.design)} · SS<sub>oos</sub> ${sk.ss_oos == null ? "—" : Number(sk.ss_oos).toFixed(4)} on ${sk.matched_pairs ?? "—"} matched pairs,
+      design ${esc(t.spec.design)}${t.spec.subgroup ? ` · ${esc(t.spec.direction || "")} in ${esc(t.spec.subgroup)}` : ""} · SS<sub>oos</sub> ${sk.ss_oos == null ? "—" : Number(sk.ss_oos).toFixed(4)} on ${sk.matched_pairs ?? "—"} matched pairs,
       paired p ${sk.p_dm == null ? "—" : Number(sk.p_dm).toPrecision(3)}${t.hp_delta ? ` · ${t.hp_delta} HP` : ""}</p>` : ""}
+    ${t.confirmation_label ? `<p class="small"><b>${esc(t.confirmation_label)}</b>${t.independent === false
+      ? " · this cohort's vault had been opened before, so it cannot confirm anything again" : ""}</p>` : ""}
     ${(t.failures || []).map((f) => `<p class="neg small">${esc(f)}</p>`).join("")}</div>`);
 }
 
@@ -192,7 +196,7 @@ const TL = {
 
 function verdictKind(outcome, crossed) {
   if (outcome === "VALIDATED DISCOVERY") return "win";
-  if (outcome === "JUSTIFIED UNCERTAINTY") return "honest";
+  if (outcome === "JUSTIFIED UNCERTAINTY" || outcome === "NO NEW INDEPENDENT CONFIRMATION") return "honest";
   return crossed ? "escape" : "fall";
 }
 

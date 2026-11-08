@@ -487,3 +487,37 @@ body.reduced *, body.reduced *::before, body.reduced *::after, body.reduced dial
 #bridge-banner.v-fall strong, #bridge-banner.v-escape strong { color: #ff8a9a; }
 .trial-card { animation: dlg-in .5s cubic-bezier(.2, .9, .3, 1.15) both; }
 .room-headline { animation: dlg-in .6s cubic-bezier(.2, .9, .3, 1.15) .3s both; }
+
+/* ---------- research integrity: scientific status, execution mode, champions (kept apart from HP) ---------- */
+.status { font: 13px/1 "Jersey 10", sans-serif; padding: 2px 5px; letter-spacing: .5px; white-space: nowrap;
+  background: #2b2840; color: var(--bone); box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .25); }
+.status.s-SUPPORTED_ON_SYNTHETIC_VALIDATION { background: var(--heal); color: var(--navy); }
+.status.s-PROVISIONALLY_SUPPORTED { background: #b6e8c2; color: var(--navy); }
+.status.s-INCONCLUSIVE { background: #c08a1a; color: var(--navy); }
+.status.s-CONTRADICTED { background: var(--blood); color: var(--bone); }
+.status.s-INVALID_ANALYSIS { background: #6a2030; color: #ffd0d8; }
+.v-WITHDRAWN { background: #6a6880; color: var(--bone); }
+.pcard.withdrawn { opacity: .7; }
+.mode { font-size: 11px; padding: 1px 5px; background: #2b2840; color: var(--muted); white-space: nowrap; }
+.mode.m-LIVE_CLAUDE { background: #1f3a5a; color: var(--cyan); }
+.mode.m-SCRIPTED_FALLBACK, .mode.m-MIXED { background: #4a3410; color: var(--gold-lit); }
+.champ-badge { display: flex; flex-direction: column; gap: 3px; margin-top: 6px; padding: 6px 8px; text-align: left;
+  background: rgba(232, 184, 71, .12); box-shadow: inset 0 0 0 1px var(--gold); font-size: 12px; }
+.champ-badge b { color: var(--gold-lit); font-size: 11px; letter-spacing: .06em; }
+.champ-badge .status { align-self: flex-start; }
+.champ-badge small { color: var(--muted); }
+.science .path { font-size: 13px; color: #5a5470; }
+.science .two { gap: 12px; }
+.sci-card { padding: 10px 12px; background: #fff; box-shadow: 0 0 0 2px #b9b0cc; margin-bottom: 10px; }
+.sci-card.go { box-shadow: 0 0 0 2px #2f9a5a; background: #f2fbf4; }
+.sci-card.hold { box-shadow: 0 0 0 2px #c08a1a; background: #fdf8ec; }
+.sci-card.defense { box-shadow: 0 0 0 2px var(--gold); background: #fffaf0; }
+.sci-card small { display: block; text-transform: uppercase; letter-spacing: .08em; font-size: 11px; color: #6a6480; }
+.sci-card strong { display: block; font-size: 17px; margin: 2px 0; }
+.sci-card p { margin: 4px 0 0; }
+.manifest-wrap summary, .science details summary { cursor: pointer; }
+ul.manifest { list-style: none; padding-left: 0; font-size: 12px; max-height: 260px; overflow: auto; }
+ul.manifest li { padding: 2px 0; border-bottom: 1px dotted #ddd; }
+ul.manifest .src { display: inline-block; min-width: 190px; color: #6a6480; }
+.trial-card.o-NONEWINDEPENDENTCONFIRMATION { box-shadow: inset 0 0 0 3px #cfe6ff; }
+.ow-verdict.o-NONEWINDEPENDENTCONFIRMATION { background: #eef4fd; border-color: #6a8ac0; }

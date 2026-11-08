@@ -120,8 +120,8 @@ def _train(w: World, mask: np.ndarray | None = None) -> np.ndarray:
 
 
 def _fit(w: World, st, mask: np.ndarray, adjusted: bool | None = None, extra=None, outcome: str | None = None) -> dict:
-    """Log rate ratio of the drug in the scroll's current design, optionally with extra columns."""
-    mask = _train(w, mask)
+    """Log rate ratio of the drug in the scroll's current design and subgroup, optionally with extra columns."""
+    mask = _train(w, mask) & w.subgroup(getattr(st, "subgroup", "everyone"))
     r = w.rows(outcome or st.outcome, st.design, mask)
     X = r["exposed"][:, None]
     if st.adjusted if adjusted is None else adjusted:
@@ -147,7 +147,7 @@ def _quarter(w: World, i: np.ndarray) -> np.ndarray:
 
 
 def test_seasonal(w: World, a, spec: dict) -> dict:
-    st, d = a.st, w.c.effect_direction
+    st, d = a.st, a.st.direction   # the claim's own direction, never the campaign's
     train = _train(w)
     base = _fit(w, st, train)
 
@@ -176,7 +176,7 @@ def test_seasonal(w: World, a, spec: dict) -> dict:
 def test_chronolock(w: World, a, spec: dict) -> dict:
     st = a.st
     train = _train(w)
-    share = J.immortal_share(w, st.outcome, st.design, train)
+    share = J.immortal_share(w, st.outcome, st.design, train & w.subgroup(st.subgroup))
     cur = _fit(w, st, train)
     purged_st = _Copy(st, design="new_user")
     purged = _fit(w, purged_st, train)
@@ -198,7 +198,7 @@ def test_chronolock(w: World, a, spec: dict) -> dict:
 
 
 def test_regional(w: World, a, spec: dict) -> dict:
-    st, d = a.st, w.c.effect_direction
+    st, d = a.st, a.st.direction   # the claim's own direction, never the campaign's
     train = _train(w)
     sites = []
     for k, (name, rural) in enumerate(SITES):
@@ -229,9 +229,9 @@ def test_regional(w: World, a, spec: dict) -> dict:
 
 
 def test_chance(w: World, a, spec: dict) -> dict:
-    st, d = a.st, w.c.effect_direction
+    st, d = a.st, a.st.direction   # the claim's own direction, never the campaign's
     outcome = spec.get("outcome") or st.outcome
-    nu = w.new_user(outcome, _train(w))
+    nu = w.new_user(outcome, _train(w) & w.subgroup(st.subgroup))
     t, y = nu["treated"].astype(bool), nu["y"]
     if t.sum() < 10 or (~t).sum() < 10:
         return unresolved("Too few new users or comparators in the training cohort to shuffle.")
@@ -260,7 +260,7 @@ def test_chance(w: World, a, spec: dict) -> dict:
 
 
 def test_replication(w: World, a, spec: dict) -> dict:
-    st, d = a.st, w.c.effect_direction
+    st, d = a.st, a.st.direction   # the claim's own direction, never the campaign's
     train = _train(w)
     cut = np.quantile(w.index[train], 1 - rules.VALIDATION_SLICE)
     early, late = train & (w.index < cut), train & (w.index >= cut)
@@ -290,7 +290,7 @@ def test_redundancy(w: World, a, spec: dict) -> dict:
 
 
 def test_confounder(w: World, a, spec: dict) -> dict:
-    st, d = a.st, w.c.effect_direction
+    st, d = a.st, a.st.direction   # the claim's own direction, never the campaign's
     cov = spec.get("covariate")
     if spec.get("unmeasured"):
         return unresolved(f"\"{spec['unmeasured']}\" is not measured in this cohort, so no test can adjust for it. "

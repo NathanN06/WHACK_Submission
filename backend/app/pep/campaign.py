@@ -1,12 +1,16 @@
-"""One run of the Peptide & GLP-1 edition: the Alchemist carries three hypothesis scrolls through four
-dungeons, the Gatekeeper Skeptic holds the active-comparator baseline, and the finale writes the brief.
+"""One run of the Peptide & GLP-1 edition: the Alchemist carries 2 to 6 hypothesis scrolls through four
+dungeons, the Gatekeeper Skeptic holds the active-comparator baseline, the Skeptic challenges what survives,
+the Bridge locks one claim for the sealed vault, and the finale writes the brief.
 
-Every HP change is the Judge applying rules.py to a number judge.py measured. Every event, with its
+Every HP change is the Judge applying rules.py to a number judge.py measured. Every scientific status is
+science.py applying rules.py to numbers the Judge measured, separately from HP. Every event, with its
 PepEncounterTelemetry record, goes to the append-only ledger the screen plays back.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import threading
 import time
@@ -14,8 +18,11 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import challenges as C
 from . import judge as J
-from . import bridge, hypotheses, report, rules
+from . import bridge, hypotheses, provenance, report, rules, science
+from . import skeptic as SK
+from . import telemetry as T
 from .agents import Decision, ScriptedHero, menu_for
 from .campaigns import ARCHETYPES, CAMPAIGNS, HERO
 from .world import COVARIATE_LABELS, HOLDOUT_END, SITES, TRAIN_END, Scroll, World
@@ -47,6 +54,9 @@ class Agent:
     hp_by_level: dict = field(default_factory=dict)
     encounters: dict = field(default_factory=dict)
     eureka: bool = False
+    plan_sha: str = ""                 # the claim as declared at recruitment, hashed: the preregistration lock
+    preregistration: dict | None = None
+    skeptic: dict | None = None        # the Skeptic's challenge and the registered test's result
 
     @property
     def archetype(self) -> str:
@@ -64,14 +74,26 @@ class Agent:
     def active(self) -> bool:
         return self.status == "active"
 
+    @property
+    def withdrawn(self) -> bool:
+        return self.status == "withdrawn"
+
     def public(self, w: World) -> dict:
         arch = ARCHETYPES[self.archetype]
+        s = self.scroll
         o = next(x for x in w.c.outcomes if x.key == self.st.outcome)
         return {"id": self.id, "name": self.name, "archetype": self.archetype, "title": arch["title"],
                 "nickname": arch["nickname"], "cls": arch["cls"], "claim": self.claim, "outcome": o.label,
-                "origin": self.scroll.origin, "K": self.st.K, "design": self.st.design, "hp": self.hp,
+                "origin": s.origin, "K": self.st.K, "design": self.st.design, "hp": self.hp,
                 "credits": self.credits, "buffs": list(self.buffs), "kind": "scroll",
-                "evidence": "real" if self.scroll.evidence_real else "simulated", "real_evidence": self._real()}
+                "evidence": "real" if s.evidence_real else "simulated", "real_evidence": self._real(),
+                "typed": {"outcome": self.st.outcome, "subgroup": self.st.subgroup,
+                          "direction": "lowers" if self.st.direction < 0 else "raises", "threat": s.threat,
+                          "falsifier": s.falsifier, "comparator": w.c.comparator, "estimand": hypotheses.ESTIMAND,
+                          "window_days": rules.FOLLOW_UP},
+                "lineage": {"hypothesis_id": s.hypothesis_id, "version": s.version, "parent_id": s.parent_id,
+                            "origin_mode": s.origin_mode, "question_key": s.question_key},
+                "incumbent": s.incumbent, "plan_sha256": self.plan_sha}
 
     def _real(self) -> dict | None:
         """The real papers and trials behind this scroll, as copied from the evidence database."""
@@ -81,19 +103,36 @@ class Agent:
         recs = s.literature.records
         return {"topic": s.evidence_topic, "papers": len(recs), "completed_rcts": s.n_rct,
                 "species": {k: sum(r["species"] == k for r in recs) for k in ("human", "rodent", "in vitro")},
-                "examples": [{"title": r["title"], "year": r["year"], "url": r["url"]} for r in recs[:5]]}
+                "examples": [{"title": r["title"], "year": r["year"], "url": r["url"], "id": provenance.paper_id(r)}
+                             for r in recs[:5]]}
+
+
+def plan_hash(c, s: Scroll, st: J.ScrollState) -> str:
+    """The claim as declared before any data were analysed. Anything that changes it changes the hash."""
+    spec = {"hypothesis_id": s.hypothesis_id, "version": s.version, "claim": s.claim, "outcome": st.outcome,
+            "subgroup": st.subgroup, "direction": st.direction, "comparator": c.comparator,
+            "estimand": hypotheses.ESTIMAND, "window_days": rules.FOLLOW_UP}
+    return hashlib.sha256(json.dumps(spec, sort_keys=True).encode()).hexdigest()
 
 
 class PepQuest:
     def __init__(self, run_id: str, campaign: str, ledger, hero=None, seed: int = 0, pace: float = 0.0,
-                 n_scrolls: int | None = None, scribe=None):
-        self.run_id, self.c = run_id, CAMPAIGNS[campaign]
+                 n_scrolls: int | None = None, scribe=None, registry=None, champions=None, skeptic=None,
+                 campaign_obj=None):
+        self.run_id, self.c = run_id, campaign_obj or CAMPAIGNS[campaign]
         # n_scrolls=None: the campaign's three hand-written scrolls. A number: the Scribe (hypotheses.py) forms
         # that many from the real evidence database, with Claude when `scribe` (a complete function) is given.
         self.n_scrolls, self.scribe = n_scrolls, scribe
         self.ledger, self.seed, self.pace = ledger, seed, pace
         self.brain = hero or ScriptedHero()
         self.w = World(self.c, seed)
+        # Research state that outlives the quest (registry.py): in memory unless the server passes its stores.
+        from .registry import ChampionStore, VaultRegistry
+        self.registry = registry if registry is not None else VaultRegistry()
+        self.champions = champions                 # None: this quest neither defends nor crowns a champion
+        self.skeptic_llm = skeptic                 # a complete function for Claude as the Skeptic, or None
+        self.incumbent = (champions.get(self.c.id) if champions is not None and n_scrolls is not None else None)
+        self.cohort: dict = {}
         self.agents: dict[str, Agent] = {}
         self.level = 0
         self._enc = 0
@@ -107,6 +146,9 @@ class PepQuest:
         self.vault_opened: dict | None = None   # the second vault: opened once, by the Trial of Truth
         self.trial: dict | None = None
         self.bridge_log: list = []
+        self.science: dict | None = None
+        self.champion_result: dict | None = None
+        self.formation: dict | None = None
 
     # ---------- the whole run ----------
 
@@ -119,6 +161,8 @@ class PepQuest:
                     self.play_level(level)
                 if self.director is not None:
                     self.director.checkpoint(level)  # wait until the screen has shown this level
+            with self.lock:
+                self.critique()
             return bridge.endgame(self)
         except QuestStopped:
             self.ledger.write(level=self.level, actor="system", action="stopped",
@@ -139,6 +183,8 @@ class PepQuest:
     def start(self) -> None:
         c, w = self.c, self.w
         tr, ho = int(w.mask("train").sum()), int(w.mask("holdout").sum())
+        self.cohort = self.registry.register(w.fingerprint(), c.id, self.seed, self.run_id)
+        hero_mode = "LIVE_CLAUDE" if getattr(self.brain, "complete", None) is not None else "SCRIPTED"
         self._emit(actor="system", action="quest_start", line=f"Campaign {c.letter}: {c.title}", result={
             "campaign": {"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
                          "comparator": c.comparator, "population": c.population, "target": c.outcomes[0].label,
@@ -151,32 +197,66 @@ class PepQuest:
             "rules": {"levels": rules.LEVELS, "enemies": rules.ENEMIES, "abilities": rules.ABILITIES,
                       "d_max": rules.D_MAX, "score_weights": rules.SCORE_WEIGHTS, "score_rules": rules.SCORE_RULES,
                       "verdicts": rules.VERDICTS, "trap_labels": rules.TRAP_LABELS, "traps": rules.TRAPS,
-                      "starting_hp": rules.STARTING_HP, "starting_credits": rules.STARTING_CREDITS},
+                      "starting_hp": rules.STARTING_HP, "starting_credits": rules.STARTING_CREDITS,
+                      "statuses": rules.STATUSES},
             "archetypes": ARCHETYPES,
+            "cohort": {**self.cohort, "data": "SIMULATED_COHORT",
+                       "note": "A fresh synthetic cohort (new simulated patients from the same population)"
+                               if self.cohort.get("fresh") else
+                               f"This synthetic cohort was used by {self.cohort.get('quests_before')} earlier quest(s): "
+                               "its holdout is not fresh, and its sealed vault cannot confirm a claim twice."},
+            "execution": {"hero": hero_mode, "scribe": "LIVE_CLAUDE" if self.scribe is not None else "SCRIPTED",
+                          "skeptic": "LIVE_CLAUDE" if self.skeptic_llm is not None else "SCRIPTED"},
+            "incumbent": _card(self.incumbent),
         })
-        scrolls = c.scrolls
         if self.n_scrolls is not None:
-            scrolls, formed = hypotheses.form(c, self.n_scrolls, self.scribe)
+            scrolls, formed = hypotheses.form(c, self.n_scrolls, self.scribe, world=w, incumbent=self.incumbent)
+            self.formation = formed
             who = "Claude, the Scribe," if formed["source"] == "claude" else "The Scribe"
             src = ("the real literature (Europe PMC) and trial registry (ClinicalTrials.gov)" if formed["evidence"] == "real"
                    else "the campaign brief (no real evidence database found)")
+            inc = " The reigning champion defends its title against fresh challengers." if self.incumbent else ""
+            rej = (f" {len(formed['rejected'])} draft(s) were rejected and replaced: "
+                   + "; ".join(f"{r['title'] or 'untitled'} ({r['reason']})" for r in formed["rejected"][:3]) + "."
+                   if formed["rejected"] else "")
             self._emit(actor="system", action="hypotheses", result=formed,
-                       line=f"{who} formed {formed['count']} hypothes{'is' if formed['count'] == 1 else 'es'} from {src}.",
-                       explain="Each scroll's papers and completed randomized trials are copied from the real evidence "
-                               "database. Its social posts and the patient cohort the Judge tests it on are simulated.")
+                       line=f"{who} formed {formed['count']} hypotheses from {src}.{inc}",
+                       explain=("Each scroll is a typed claim (outcome, direction, subgroup) the Judge tests exactly. Its "
+                                "papers and trials are copied from the real evidence database; its social posts and the "
+                                "patient cohort are simulated." + rej)[:600])
+        else:
+            scrolls = [hypotheses.stamp(c, s) for s in c.scrolls]
         for s in scrolls:
             K = s.outcomes_searched * s.subgroups_searched
-            a = Agent(s.key, s, J.ScrollState(outcome=s.outcome, design=s.design, K=K))
+            st = J.ScrollState(outcome=s.outcome, design=s.design, K=K, subgroup=s.subgroup,
+                               direction=s.direction or c.effect_direction)
+            a = Agent(s.key, s, st)
+            a.plan_sha = plan_hash(c, s, st)
             self.agents[a.id] = a
-            how = (f"Found in {s.origin}. As carried: exposure counted from the index date for anyone who ever filled "
-                   f"a prescription; {K} outcome-and-subgroup combination{'s' if K > 1 else ''} in its search space.")
+            how = (f"Found in {s.origin}. Typed claim: {'lowers' if st.direction < 0 else 'raises'} "
+                   f"{report._lower(next(o.label for o in c.outcomes if o.key == s.outcome))} in "
+                   f"{'everyone' if s.subgroup == 'everyone' else 'the ' + s.subgroup + ' subgroup'}. As carried: exposure "
+                   f"counted from the index date for anyone who ever filled a prescription; {K} outcome-and-subgroup "
+                   f"combination{'s' if K > 1 else ''} in its search space. Claim locked ({a.plan_sha[:12]}).")
+            if s.incumbent:
+                how += (f" Reigning champion ({s.incumbent.get('status')}, {s.incumbent.get('confirmations', 0)} "
+                        "independent confirmation(s) so far): its history is context, never counted again as evidence.")
             if s.evidence_real:
                 sp = {k: sum(r["species"] == k for r in s.literature.records) for k in ("human", "rodent", "in vitro")}
                 how += (f" Real evidence ({s.evidence_topic}): {len(s.literature.records)} papers "
                         f"({sp['human']} human, {sp['rodent']} animal, {sp['in vitro']} in vitro) and "
-                        f"{s.n_rct} completed randomized trial{'' if s.n_rct == 1 else 's'}.")
+                        f"{s.n_rct} completed randomized trial{'' if s.n_rct == 1 else 's'} registered (results not assessed).")
             self._emit(actor="system", action="recruit", agent=a, line=f"The Alchemist takes up {s.title}: \"{s.claim}\"",
-                       explain=how, payload={"agent": a.public(w)})
+                       explain=how, payload={"agent": a.public(w), "sources": provenance.scroll_sources(self, a)})
+        self._emit(actor="system", action="analysis_plan",
+                   line=f"Analysis plan locked before any data: {len(self.agents)} claims, Holm across all of them at the "
+                        "Guardian, one claim for the sealed vault.",
+                   explain="Every multiplicity family and status rule is fixed now, before an outcome is analysed.",
+                   result={"families": rules.MULTIPLICITY_FAMILIES, "holm_family": list(self.agents),
+                           "statuses": rules.STATUSES, "mie_rr": rules.MIE_RR, "alpha": rules.ALPHA,
+                           "analysis_version": rules.ANALYSIS_VERSION,
+                           "claims": {a.id: {"plan_sha256": a.plan_sha, "question_key": a.scroll.question_key}
+                                      for a in self.agents.values()}})
         self._gate(0, f"I am the Warden of the Null. My baseline is {report._comp(c)}, with no drug effect at all. "
                       "Your scrolls must beat it on patients you have never seen.")
 
@@ -209,9 +289,11 @@ class PepQuest:
 
     def decide(self, a: Agent, level: int) -> None:
         menu = menu_for(a, level)
-        brief = {"campaign": self.c.question, "scroll": a.name, "claim": a.claim, "level": rules.LEVELS[level]["name"],
-                 "trap": rules.LEVELS[level]["trap"], "rule": rules.LEVELS[level]["rule"]}
-        d: Decision = self.brain.choose(a, level, menu, brief)
+        try:   # what the hero may see: blinded telemetry and earlier findings, re-checked by the leak guard
+            payload, blocked = T.planning_payload(self, a, level, menu), None
+        except T.LeakError as e:
+            payload, blocked = None, str(e)
+        d: Decision = self.brain.choose(a, level, menu, payload)
         picks = [k for k in d.abilities if k in menu]
         cost = sum(rules.ABILITIES[k]["cost"] for k in picks)
         if cost > a.credits:  # a hard rule, not a choice
@@ -221,13 +303,33 @@ class PepQuest:
         a.cast[level] = picks
         # Ablation Strike measures the scroll as it stands, so apply it after every ability that changes it.
         notes = [self.apply_ability(a, k) for k in sorted(picks, key=lambda k: k == "ABLATION_STRIKE")]
+        trace = dict(getattr(d, "trace", None) or {"execution_mode": "SCRIPTED"})
+        if blocked:
+            trace.update(fallback_reason="LEAK_BLOCKED", leak=blocked[:200])
+        record = d.record() if hasattr(d, "record") else {"selected_ability_ids": picks, "line": d.line}
+        record["selected_ability_ids"] = picks
         self._emit(actor="agent", action="decision", agent=a, cost=cost, line=d.line,
                    explain=" ".join(n for n in notes if n) or "No abilities cast for this scroll this level.",
                    payload={"abilities": picks, "source": d.source, "menu": list(menu),
-                            "decision": {"abilities": picks, "line": d.line}})
+                            "decision": record, "execution": trace,
+                            "saw": T.public(payload) if payload else {"blocked": True}})
+        if getattr(d, "next_action", "TEST") == "STOP" and level >= 2:
+            self.withdraw(a, level, d)
+
+    def withdraw(self, a: Agent, level: int, d: Decision) -> None:
+        """The hero stops testing a claim its exploratory results undercut. It stays in the Holm family (p = 1)."""
+        a.status, a.verdict = "withdrawn", "WITHDRAWN"
+        self._emit(actor="system", action="withdraw", agent=a,
+                   line=f"The Alchemist withdraws {a.name} before {rules.LEVELS[level]['name']}'s tests.",
+                   explain=(d.reason or "Stopped after its exploratory results.")[:400] +
+                           " A withdrawn claim is not tested further and cannot be supported; it stays in the "
+                           "quest's correction for multiple claims.",
+                   result={"level": level, "cited": list(d.cited)})
 
     def apply_ability(self, a: Agent, k: str) -> str:
         st = a.st
+        if k == "PREREGISTER" and 3 in a.m:   # the search already ran on this cohort: a lock now would be retroactive
+            return "Preregister refused: the Level III analysis already ran, so locking now would be retroactive."
         if k in rules.M_ABILITY:
             rule, m = rules.M_ABILITY[k]
             a.mult[rule] = min(a.mult.get(rule, 1.0), m)
@@ -248,7 +350,10 @@ class PepQuest:
         if k == "PREREGISTER":
             st.K = 1
             a.buffs.append("PREREGISTERED")
-            return "Preregistered: one outcome, the whole population, declared before testing. K = 1."
+            a.preregistration = {"plan_sha256": a.plan_sha, "level": 3, "before_outcome_analysis": True}
+            who = "everyone" if st.subgroup == "everyone" else f"the {st.subgroup} subgroup"
+            return (f"Preregistered: the declared outcome in {who}, locked before Level III's analysis "
+                    f"({a.plan_sha[:12]}). K = 1.")
         if k == "REPLICATION_SHIELD":
             st.replicated = True
             a.buffs.append("REPLICATION SHIELD")
@@ -478,9 +583,12 @@ class PepQuest:
                                            {"label": "Immortal time purged", "est": round(m["rr_purged"], 4)}]}}
             if key == "guardian":
                 time_zero = st.design == "new_user"
-                raw, eureka = J.d_final(m, time_zero)
+                dir_ok = m.get("direction_ok", True)
+                raw, eureka = J.d_final(m, time_zero, dir_ok)
                 a.eureka = eureka
-                untrusted_gain = not time_zero and m["ss_oos"] > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA
+                skilled = m["ss_oos"] > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA
+                untrusted_gain = dir_ok and not time_zero and skilled
+                wrong_way = skilled and not dir_ok and not m.get("no_overlap")
                 ob, pr = m["observed"], m["predicted"]
                 if m.get("no_overlap"):
                     return {"raw": raw, "heal": 0, "eureka": False,
@@ -489,21 +597,29 @@ class PepQuest:
                             "text": f"matched pairs = {m['matched_pairs']} < 2; D_final = {raw:.1f}",
                             "latex": f"n_{{pairs}} = {m['matched_pairs']}",
                             "numbers": {"matched_pairs": m["matched_pairs"], "rr_used": math.exp(m["beta_used"])}}
+                claimed = "lower" if st.direction < 0 else "raise"
                 return {"raw": raw, "heal": rules.EUREKA_HEAL if eureka else 0, "eureka": eureka,
                         "line": f"SS_oos = {m['ss_oos']:+.4f} on {m['matched_pairs']} matched holdout pairs; paired p = {m['p_dm']:.3g}"
                                 + (". Eureka! +10 HP" if eureka else
+                                   f", but the effect carried is a rate ratio of {math.exp(m['beta_used']):.2f}: the opposite of the "
+                                   f"claim that the drug {claimed}s the event, so the claim is falsified." if wrong_way else
                                    ", but on a design with immortal time, so the gain is not trusted." if untrusted_gain else "."),
                         "plain": (f"Using this scroll's effect predicted unseen patients {m['ss_oos'] * 100:.1f}% better than the comparator, "
                                   "and that is unlikely to be luck." if eureka else
+                                  f"The data predict better with an effect pointing the other way: the claim says the drug "
+                                  f"{claimed}s the event, and the measured effect says the opposite." if wrong_way else
                                   "It beat the comparator, but its effect was measured with immortal time, which inflates it; "
                                   "only a time-zero (new-user) design can earn a Eureka." if untrusted_gain else
                                   "It predicted unseen patients no better than the comparator." if m["ss_oos"] >= -rules.SS_MARGIN else
                                   f"Its effect made predictions {abs(m['ss_oos']) * 100:.1f}% worse than assuming no drug effect at all."),
-                        "text": f"SS = 1 - {m['loss_scroll']:.5f} / {m['loss_comparator']:.5f} = {m['ss_oos']:.4f}; paired p = {m['p_dm']:.3g}; D_final = {raw:.1f}",
+                        "text": f"SS = 1 - {m['loss_scroll']:.5f} / {m['loss_comparator']:.5f} = {m['ss_oos']:.4f}; paired p = {m['p_dm']:.3g}"
+                                + (f"; direction {'matches' if dir_ok else 'contradicts'} the claim" if m["beta_used"] else "")
+                                + f"; D_final = {raw:.1f}",
                         "latex": f"SS_{{oos}} = 1 - \\frac{{{m['loss_scroll']:.5f}}}{{{m['loss_comparator']:.5f}}} = {m['ss_oos']:.4f}",
                         "numbers": {"ss_oos": m["ss_oos"], "p_dm": m["p_dm"], "matched_pairs": m["matched_pairs"],
                                     "loss_scroll": m["loss_scroll"], "loss_comparator": m["loss_comparator"],
-                                    "rr_used": math.exp(m["beta_used"])},
+                                    "rr_used": math.exp(m["beta_used"]), "direction_claimed": st.direction,
+                                    "direction_ok": dir_ok},
                         "chart": {"kind": "grouped", "title": "Vaulted holdout, matched: one-year risk observed vs predicted",
                                   "groups": [{"label": "Peptide users", "values": {"observed": ob["treated"], "scroll": pr["scroll_treated"], "baseline": pr["baseline_treated"]}},
                                              {"label": "Comparators", "values": {"observed": ob["comparator"], "scroll": pr["scroll_comparator"], "baseline": pr["baseline_comparator"]}}]}}
@@ -530,14 +646,92 @@ class PepQuest:
                            "standing": sum(a.active for a in self.agents.values()),
                            "most_damaging": report.most_damaging(self.agents.values(), level)})
 
+    # ---------- the Skeptic: one falsification test per surviving claim, before the Bridge locks one ----------
+
+    def critique(self) -> None:
+        active = self._active()
+        if not active:
+            return
+        self.level = 5
+        picks, trace = SK.choose(active, self.skeptic_llm)
+        self._emit(actor="system", action="skeptic_start",
+                   line="The Skeptic blocks the way to the Bridge: one more test for every claim still standing.",
+                   explain="Each test comes from the registered challenge registry and runs on the training years only. "
+                           "It changes no HP and no number: it is a robustness check the Bridge and the report disclose.",
+                   result={"execution": trace, "speaker": "skeptic"})
+        for ch in picks:
+            a = self.agents[ch["scroll_id"]]
+            kind = ch["challenge_type"]
+            self._emit(actor="system", action="skeptic_challenge", agent=a,
+                       line=f"Skeptic: \"{ch['critique'] or C.ARCHETYPES[kind]['question']}\"",
+                       explain=ch["reason"], result={"challenge": ch, "speaker": "skeptic",
+                                                     "test": C.ARCHETYPES[kind]["test"]})
+            if not ch["can_test_with_available_data"] or ch["risk_of_data_leakage"] == "HIGH":
+                res = C.unresolved("The Skeptic judged this challenge untestable on the training years without leakage.")
+            else:
+                res = C.run(self.w, a, kind, {"outcome": a.st.outcome})
+            a.skeptic = {"challenge": kind, "outcome": res["outcome"], "line": res["line"],
+                         "leakage": bool(res.get("leakage")), "source": ch.get("source", "script")}
+            self._emit(actor="judge", action="skeptic_result", agent=a,
+                       passed=None if res["outcome"] == "UNRESOLVED" else res["outcome"] == "SURVIVED",
+                       line=f"{C.ARCHETYPES[kind]['boss']}: {res['outcome'].lower()}. {res['line']}"[:400],
+                       explain=res["plain"],
+                       payload={"numbers": res["numbers"], "chart": res.get("chart"), "formula": res["rule"],
+                                "outcome": res["outcome"], "test": kind, "hp_rule": "none: a robustness check"})
+
     def finale(self) -> dict:
         self.level = 5
+        self.science = science.evaluate(self)
+        for a in self.agents.values():
+            row, ref = self.science["scrolls"][a.id], self.science["scrolls"][a.id]["reference"]
+            olabel = report._lower(next(o.label for o in self.c.outcomes if o.key == a.st.outcome))
+            mie = rules.MIE_RR if a.st.direction < 0 else 1 / rules.MIE_RR
+            self._emit(actor="judge", action="scientific_status", agent=a,
+                       line=f"{a.name}: {row['status'].replace('_', ' ')}.", explain=" ".join(row["reasons"])[:600],
+                       payload={"science": {k: row[k] for k in ("status", "reasons", "holm_p", "guardian_p", "family_size",
+                                                                "contradiction", "trial_outcome", "confirmation_kind")},
+                                "numbers": {"rr_reference": ref["rr"], "rr_lo": ref["rr_lo"], "rr_hi": ref["rr_hi"],
+                                            "p_reference": ref["p"], "holm_p": row["holm_p"],
+                                            "family_size": row["family_size"], "important_effect_rr": mie},
+                                "chart": {"kind": "forest", "title": f"Reference rate ratio for {olabel} "
+                                          f"({a.st.subgroup}; new-user, adjusted, training years)", "ref": 1.0,
+                                          "rows": [{"label": "Reference analysis", "est": round(ref["rr"], 4),
+                                                    "lo": round(ref["rr_lo"], 4), "hi": round(ref["rr_hi"], 4)},
+                                                   {"label": "Smallest important effect claimed", "est": round(mie, 4)}]},
+                                "formula": "status rules fixed in rules.STATUSES; Holm across the quest's claims; "
+                                           f"CONTRADICTED if the 95% CI excludes a {round(100 * (1 - rules.MIE_RR))}% effect "
+                                           "in the claimed direction"})
         result = report.finale(self)
         if self.trial is not None:
             result["overworld"] = bridge.overworld(self)
             result["headline"] = _trial_headline(self.trial)
+        if self.champions is not None and self.n_scrolls is not None:
+            self.champion_result = self.champions.settle(self.c.id, self._settle_summary())
+            result["champion_defense"] = {"outcome": self.champion_result["outcome"],
+                                          "incumbent": _card(self.incumbent),
+                                          "champion": _card(self.champion_result["champion"])}
+            self._emit(actor="system", action="champion", line=_defense_line(self.champion_result["outcome"], self.incumbent),
+                       explain=report.CHAMPION_NOTE, result=result["champion_defense"])
         self._emit(actor="system", action="finale", line=result["headline"], result=result)
         return result
+
+    def _settle_summary(self) -> dict:
+        rows = []
+        for a in self.agents.values():
+            r = self.science["scrolls"][a.id]
+            s = a.scroll
+            rows.append({**{k: r[k] for k in ("id", "status", "ss_oos", "holm_p", "trial_outcome", "confirmation_kind",
+                                              "spec_sha256")},
+                         "hypothesis": {"hypothesis_id": s.hypothesis_id, "version": s.version, "parent_id": s.parent_id,
+                                        "title": s.title, "claim": s.claim, "outcome": s.outcome,
+                                        "outcome_label": next(o.label for o in self.c.outcomes if o.key == s.outcome),
+                                        "subgroup": a.st.subgroup, "direction": a.st.direction, "archetype": s.archetype,
+                                        "topic": s.evidence_topic, "origin": s.origin, "threat": s.threat,
+                                        "falsifier": s.falsifier, "question_key": s.question_key},
+                         "manifest_ids": [x["id"] for x in provenance.scroll_sources(self, a) if x["id"]][:40]})
+        inc = next((a.id for a in self.agents.values() if a.scroll.origin_mode == "INCUMBENT"), None)
+        return {"quest_id": self.run_id, "seed": self.seed, "world": self.w.fingerprint(), "scrolls": rows,
+                "incumbent_id": inc, "subject_label": f"{self.c.drug} vs {self.c.comparator} in {self.c.population}"}
 
     # ---------- internals ----------
 
@@ -578,8 +772,34 @@ def _trial_headline(t: dict) -> str:
     who = t.get("name") or "The hero"
     return {"VALIDATED DISCOVERY": f"Validated discovery: {who} survives the Trial of Truth and the hero crosses into the Overworld.",
             "JUSTIFIED UNCERTAINTY": "Justified uncertainty: the hero crosses the bridge with a qualified, honest report.",
+            "NO NEW INDEPENDENT CONFIRMATION": f"No new independent confirmation: {who} held on a vault that was already "
+                                               "opened, which cannot count as fresh evidence.",
             "UNJUSTIFIED CONFIDENCE": f"Unjustified confidence: {who} fails on the sealed vault and the bridge cracks.",
             "INVALID METHODOLOGY": f"Invalid methodology: the final audit rejects {who} and the bridge collapses."}[t["outcome"]]
+
+
+def _card(rec: dict | None) -> dict | None:
+    """A champion record as the title screen and the brief show it."""
+    if not rec:
+        return None
+    h = rec.get("hypothesis") or {}
+    return {"title": h.get("title"), "claim": h.get("claim"), "hypothesis_id": h.get("hypothesis_id"),
+            "version": h.get("version"), "outcome": h.get("outcome_label"), "subgroup": h.get("subgroup"),
+            "direction": "lowers" if (h.get("direction") or -1) < 0 else "raises", "status": rec.get("status"),
+            "status_now": rec.get("status_now"), "confirmations": rec.get("confirmations", 0), "since": rec.get("since"),
+            "last_event": (rec.get("last_result") or {}).get("event"), "defences": len(rec.get("history", [])) - 1,
+            "label": rec.get("label")}
+
+
+def _defense_line(outcome: str, incumbent: dict | None) -> str:
+    title = ((incumbent or {}).get("hypothesis") or {}).get("title") or "the champion"
+    return {"CROWNED": "A new champion is crowned for this research question.",
+            "DEFENDED": f"The incumbent, {title}, defends its title on a fresh cohort.",
+            "REPLACED": f"A challenger replaces the incumbent, {title}.",
+            "DETHRONED": f"The incumbent, {title}, is contradicted on a fresh cohort and loses its title; no successor.",
+            "UNRESOLVED": f"Unresolved: {title} was not re-confirmed and no challenger did better. It keeps its title, unconfirmed.",
+            "NO_CHAMPION": "No new scientific champion: no claim was supported.",
+            "NOT_CONTESTED": "The champion was not part of this quest, so its title was not contested."}[outcome]
 
 
 ENEMY_ACTION = {"siren": ("DENOISE", "EXPLORATORY_CLAIM"), "bat": ("DENOISE", "EXPLORATORY_CLAIM"),

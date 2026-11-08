@@ -452,7 +452,7 @@ class Expedition:
                     result={"secret": sl})
             return m
         # Obstacle 2: is there any effect in the new data at all? Fisher's exact test, one-sided in the claimed direction.
-        d = q.c.effect_direction
+        d = a.st.direction   # the claim's own direction
         _, p_fisher = stats.fisher_exact([[e1, n1 - e1], [e0, n0 - e0]], alternative="less" if d < 0 else "greater")
         r1, r0 = e1 / n1, e0 / n0
         self._obstacle(a, level, SECRET["obstacles"][1], p_fisher < rules.ALPHA,
@@ -462,7 +462,7 @@ class Expedition:
                        {"risk_treated": r1, "risk_untreated": r0, "p_fisher": float(p_fisher)})
         sl["steps"].append({"obstacle": "Probability Phantom", "passed": bool(p_fisher < rules.ALPHA)})
         # Final boss: does the new data agree with the hero's own estimate (crude one-year risk ratio, new users, training)?
-        nu = q.w.new_user(a.st.outcome, C._train(q.w))
+        nu = q.w.new_user(a.st.outcome, C._train(q.w) & q.w.subgroup(a.st.subgroup))
         tt, yy = nu["treated"].astype(bool), nu["y"]
         hero = _log_rr(int(yy[tt].sum()), int(tt.sum()), int(yy[~tt].sum()), int((~tt).sum()))
         new = _log_rr(e1, n1, e0, n0)

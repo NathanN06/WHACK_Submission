@@ -29,8 +29,12 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - Run tests with: .venv/bin/python -m pytest -q   and   node --test frontend/tests/*.test.js
 
 ## The Gauntlet (Peptide & GLP-1 Edition): rules for editing backend/app/pep
-- The hero (agents.py) only chooses abilities for each scroll. Only judge.py measures; only campaign.py applies the damage rules in rules.py; report.py only copies measured numbers.
-- The Scribe (hypotheses.py) only writes the words of 1-6 scrolls (title, claim, origin, outcome, topic, archetype) when a quest asks for `scrolls: N`; it never writes numbers. Each scroll's papers and completed-RCT count are copied from the REAL `data/pep_evidence.duckdb`; without `scrolls`, the three hand-written scrolls are used.
+- The hero (agents.py) only chooses abilities and says why, from the blinded payload telemetry.py builds (outcome-free flags + earlier-level findings, allowlisted and leak-guarded). Never put holdout, vault, Guardian/Trial numbers or planted truths in a planning payload.
+- Only judge.py measures; only campaign.py applies the damage rules in rules.py; only science.py assigns scientific statuses (rules.STATUSES), and never from HP; report.py and provenance.py only copy measured numbers and stored identifiers.
+- The Scribe (hypotheses.py) writes 2-6 TYPED claims (outcome, direction, subgroup, ...) when a quest asks for `scrolls: N`; textpolicy.py decides which numbers model-written text may contain. The Judge tests the typed claim, in its subgroup and direction. Each scroll's papers and trials are copied from the REAL `data/pep_evidence.duckdb`; without `scrolls`, the three hand-written scrolls are used.
+- All Claude calls go through app/llm.py (`ask_traced`): every decision records its execution mode and fallback reason.
 - The patient cohort and social corpus are still a simulated world (world.py) with planted truths: never present results as real findings or medical advice.
-- The "vault2" split (index day >= 1450) is reserved for a future Evolution Trial: never read it in levels I to IV.
-- After changing the engine, re-record the demos: .venv/bin/python scripts/run_pep.py all --out frontend/src/demo --quiet
+- The "vault2" split (index day >= 1450) is read only by the Trial of Truth, after the spec is locked and the opening logged in registry.py; never in levels I to IV, the Skeptic or Mystery tests. A reused vault never counts as a new confirmation.
+- Bump rules.ANALYSIS_VERSION when an estimator or status rule changes. Then re-record the demos: .venv/bin/python scripts/run_pep.py all --out frontend/src/demo --quiet
+- Benchmark (truth vs luck over many seeded worlds): .venv/bin/python scripts/evaluate_pep.py --seeds 20 --out docs, then copy docs/evaluation_summary.json to frontend/src/demo/.
+- On Windows the venv's Python is .venv\Scripts\python (not .venv/bin/python).

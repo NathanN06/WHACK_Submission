@@ -8,16 +8,15 @@ LLM version that validates every reply and falls back to the script if the
 model returns something unusable.
 """
 
-import json
-import os
-from typing import Callable, Literal, Protocol
+from typing import Literal, Protocol
 
-from pydantic import BaseModel, Field, ValidationError
+from pydantic import BaseModel, Field
 
+# The Claude client lives in app/llm.py, shared with the Gauntlet; re-exported here for older imports.
+from ..llm import (ENV_FILE, Complete, _extract_json, anthropic_complete, ask,  # noqa: F401
+                   llm_available, load_env_key)
 from . import config
 from .models import Gladiator, GladiatorState
-
-Complete = Callable[[str, str], str]  # (system, user) -> text
 
 
 class Lanista(Protocol):
@@ -190,28 +189,6 @@ class _Attack(BaseModel):
     line: str
 
 
-def _extract_json(text: str) -> str:
-    starts = [i for i in (text.find("{"), text.find("[")) if i >= 0]
-    if not starts:
-        raise ValueError("no JSON in reply")
-    start = min(starts)
-    end = max(text.rfind("}"), text.rfind("]"))
-    return text[start:end + 1]
-
-
-def ask(complete: Complete, system: str, payload: dict, schema: type[BaseModel]):
-    """Call the model, validate against `schema`, retry once with the error. None on failure."""
-    user = json.dumps(payload, default=str)
-    for _ in range(2):
-        try:
-            return schema.model_validate_json(_extract_json(complete(system, user)))
-        except (ValidationError, ValueError) as e:
-            user = json.dumps({**payload, "your_last_reply_was_invalid": str(e)[:300]}, default=str)
-        except Exception:  # network or API error: give up and let the script take over
-            return None
-    return None
-
-
 def _round(d: dict) -> dict:
     return {k: (round(v, 3) if isinstance(v, float) else v) for k, v in d.items()}
 
@@ -284,47 +261,6 @@ class LLMSceptic:
             self.fallbacks += 1
             return self.fallback.next_attack(state, options, denarii)
         return reply.test, reply.line
-
-
-def anthropic_complete(model: str | None = None, temperature: float | None = None) -> Complete:
-    """A Complete function backed by the Anthropic API. Needs ANTHROPIC_API_KEY."""
-    import anthropic
-
-    client = anthropic.Anthropic()
-    model = model or os.environ.get("ARENA_MODEL", "claude-sonnet-5-5")
-
-    def complete(system: str, user: str) -> str:
-        extra = {} if temperature is None else {"temperature": temperature}
-        msg = client.messages.create(model=model, max_tokens=1500, system=system,
-                                     messages=[{"role": "user", "content": user}], **extra)
-        return "".join(block.text for block in msg.content if block.type == "text")
-
-    return complete
-
-
-def load_env_key(path: str | os.PathLike = ".env") -> None:
-    """Put ANTHROPIC_API_KEY from a .env file into the environment, unless it is already set."""
-    if os.environ.get("ANTHROPIC_API_KEY"):
-        return
-    try:
-        lines = open(path).read().splitlines()
-    except OSError:
-        return
-    for line in lines:
-        key, sep, value = line.strip().partition("=")
-        value = value.strip().strip('"').strip("'")
-        if sep and key.strip() == "ANTHROPIC_API_KEY" and value:
-            os.environ["ANTHROPIC_API_KEY"] = value
-            return
-
-
-ENV_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "..", ".env")
-
-
-def llm_available(env_file: str | os.PathLike = ENV_FILE) -> bool:
-    """Claude plays whenever an API key is set (in the shell or in .env)."""
-    load_env_key(env_file)
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
 
 
 def make_agents(use_llm: bool) -> tuple[Lanista, Sceptic]:

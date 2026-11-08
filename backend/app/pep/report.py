@@ -1,7 +1,9 @@
 """Level summaries, the composite score and the Research Decision Brief of the Peptide & GLP-1 edition.
 
 Nothing here measures anything new: every number is copied from a measurement the Judge already
-made and wrote to the ledger, with the encounter id that holds it.
+made and wrote to the ledger, with the encounter id that holds it. The brief's decision follows the
+scientific status (science.py), never HP or the game result, and it never says a simulated result was
+confirmed in real patients.
 """
 
 from __future__ import annotations
@@ -10,11 +12,15 @@ import math
 from collections import defaultdict
 
 from . import judge as J
-from . import rules
+from . import provenance, rules
 from .campaigns import ARCHETYPES
 
-DISCLAIMER = ("SIMULATED CAMPAIGN: a synthetic world (EHR cohort, social posts, papers and trial registry) with planted, "
-              "known effects, built to test the Judge. These are not real findings and not medical advice.")
+DISCLAIMER = ("SIMULATED CAMPAIGN: a synthetic patient cohort and social corpus with planted, known effects, built to test "
+              "the Judge; papers and trial records are real metadata used as context only. These are not real findings "
+              "and not medical advice.")
+CHAMPION_NOTE = ("A champion is the best-supported claim in a simulated cohort, compared on one cohort with one metric. It is "
+                 "not clinical evidence, and its history is never counted again as new evidence.")
+MAX_PAPERS_SHOWN = 12
 
 
 def biostat(a) -> dict:
@@ -66,6 +72,7 @@ def damage_breakdown(agents) -> list[dict]:
 
 def finale(q) -> dict:
     c = q.c
+    sci = q.science or {"scrolls": {}, "best": None}
     rows = []
     for a in q.agents.values():
         m4 = a.m.get(4, {})
@@ -73,7 +80,9 @@ def finale(q) -> dict:
         faced, falsified = len(a.traps), sum(a.traps.values())
         lift = m4.get("lift_pct", 0.0) or 0.0
         score = J.composite_score(ss if a.active else None, a.hp, falsified, faced, lift, a.spent)
-        if not a.active:
+        if a.status == "withdrawn":
+            verdict = "WITHDRAWN"
+        elif not a.active:
             verdict = "SHATTERED"
         elif a.eureka:
             verdict = "VALIDATED"
@@ -82,66 +91,116 @@ def finale(q) -> dict:
         a.verdict = verdict
         o = next(x for x in c.outcomes if x.key == a.st.outcome)
         m2, m3 = a.m.get(2, {}), a.m.get(3, {})
+        s = sci["scrolls"].get(a.id)
         rows.append({
             "id": a.id, "name": a.name, "archetype": a.archetype, "title": ARCHETYPES[a.archetype]["title"],
             "claim": a.claim, "outcome": o.label, "status": a.status, "verdict": verdict, "hp": a.hp,
             "credits": a.credits, "spent": a.spent, "hp_by_level": a.hp_by_level, "traps_faced": faced,
             "traps_falsified": falsified, "damage": dict(a.damage), "score": score, "buffs": list(a.buffs),
             "abilities": a.cast, "encounters": a.encounters, "design": a.st.design, "K": a.st.K,
+            "subgroup": a.st.subgroup, "direction": "lowers" if a.st.direction < 0 else "raises",
+            "hypothesis_id": a.scroll.hypothesis_id, "origin_mode": a.scroll.origin_mode,
             "skill": {"ss_oos": _r(ss), "p_dm": _r(m4.get("p_dm")), "lift_pct": _r(lift),
-                      "matched_pairs": m4.get("matched_pairs"), "rr_used": _r(math.exp(m4["beta_used"]))} if m4 else None,
+                      "matched_pairs": m4.get("matched_pairs"), "rr_used": _r(math.exp(m4["beta_used"])),
+                      "direction_ok": m4.get("direction_ok")} if m4 else None,
+            "science": {"status": s["status"], "reasons": s["reasons"], "holm_p": _r(s["holm_p"]),
+                        "family_size": s["family_size"], "rr_reference": _r(s["reference"]["rr"]),
+                        "rr_lo": _r(s["reference"]["rr_lo"]), "rr_hi": _r(s["reference"]["rr_hi"]),
+                        "trial_outcome": s["trial_outcome"], "confirmation_kind": s["confirmation_kind"]} if s else None,
+            "skeptic": a.skeptic,
             "metrics": {"phi": _r(a.m.get(1, {}).get("phi")), "n_eff": a.m.get(1, {}).get("n_eff"),
                         "tau": _r(m2.get("tau")), "rr_naive": _r((m2.get("naive") or {}).get("rr")),
                         "rr_adjusted": _r((m2.get("adjusted") or {}).get("rr")), "shift": _r(m2.get("shift")),
                         "K": m3.get("K"), "p_raw": _r(m3.get("p_raw")), "p_corr": _r(m3.get("p_corr")),
                         "h_lab": _r(m3.get("h_lab")), "n_rct": m3.get("n_rct"),
                         "replicating": len(m3.get("replicating", [])),
+                        "site_heterogeneity_p": _r((m3.get("heterogeneity") or {}).get("p")),
                         "immortal_share": _r(m4.get("immortal_share")), "delta_purge": _r(m4.get("delta_purge")),
                         "rr_current": _r(m4.get("rr_current")), "rr_purged": _r(m4.get("rr_purged"))},
         })
     rank = sorted(rows, key=lambda r: (r["status"] != "active", r["verdict"] != "VALIDATED", -r["score"]["total"]))
     validated = [r for r in rank if r["verdict"] == "VALIDATED"]
     champ = validated[0] if validated else None
-    champion = q.agents[champ["id"]] if champ else None
+    best = q.agents.get(sci.get("best") or "")
     gate = ARCHETYPES["SKEPTIC"]
     benchmark = {"id": "gatekeeper", "name": gate["nickname"], "archetype": "SKEPTIC", "title": gate["title"],
                  "claim": f"{c.comparator}: no drug effect at all.", "verdict": "BASELINE", "status": "active",
                  "skill": {"ss_oos": 0.0}, "score": None}
-    brief = decision_brief(q, champion, rows)
-    if champion:
-        headline = f"The Alchemist emerges from the Citadel with {champion.name}: \"{champion.claim}\""
+    brief = decision_brief(q, best, rows)
+    if best is not None:
+        headline = f"The Alchemist emerges from the Citadel with {best.name}: \"{best.claim}\""
+    elif champ:
+        headline = (f"{champ['name']} won the game but its claim is not scientifically supported "
+                    f"({sci['scrolls'][champ['id']]['status'].replace('_', ' ').lower()}).")
     else:
         headline = (f"Baseline Holds. No scroll predicted unseen patients better than {_comp(c)} "
                     "with no drug effect: inconclusive.")
+    winner = rank[0] if rank else None
+    science_block = {
+        "statuses": {r["id"]: (r["science"] or {}).get("status") for r in rows},
+        "best_supported": ({"id": best.id, "name": best.name, "claim": best.claim,
+                            "status": sci["scrolls"][best.id]["status"]} if best else None),
+        "best_status": sci.get("best_status"), "discovery": best is not None,
+        "game_winner": ({"id": winner["id"], "name": winner["name"], "verdict": winner["verdict"]} if winner else None),
+        "agree": bool(best and winner and best.id == winner["id"] and winner["verdict"] == "VALIDATED")
+                 or (best is None and champ is None),
+        "family": sci.get("family"), "mie_rr": sci.get("mie_rr"), "analysis_version": sci.get("analysis_version"),
+        "rules": rules.STATUSES,
+    }
     return {
         "headline": headline, "campaign": {"id": c.id, "letter": c.letter, "title": c.title, "question": c.question,
                                            "drug": c.drug, "comparator": c.comparator},
         "champion": champ, "baseline_holds": champ is None, "benchmark": benchmark,
         "ranking": rank, "damage": damage_breakdown(q.agents.values()), "brief": brief,
         "score_rules": rules.SCORE_RULES, "score_weights": rules.SCORE_WEIGHTS, "simulated": True,
-        "truth": c.truth,
+        "truth": c.truth, "science": science_block, "manifest": manifest(q),
+        "cohort": {"seed": q.seed, "fingerprint": q.w.fingerprint(), **{k: q.cohort.get(k) for k in ("fresh", "quests_before")}},
         "totals": {"encounters": q._enc, "credits_spent": sum(r["spent"] for r in rows),
                    "traps_sprung": sum(r["traps_faced"] - r["traps_falsified"] for r in rows),
-                   "shattered": sum(r["status"] != "active" for r in rows)},
+                   "shattered": sum(r["status"] == "shattered" for r in rows),
+                   "withdrawn": sum(r["status"] == "withdrawn" for r in rows)},
     }
 
 
+def manifest(q) -> dict:
+    """The Archivist's manifest: every source by type, with stored identifiers only (papers capped for display)."""
+    scrolls = {}
+    for a in q.agents.values():
+        items = provenance.scroll_sources(q, a)
+        papers = [x for x in items if x["type"] == "REAL_PUBLICATION_METADATA"]
+        scrolls[a.id] = {"items": [x for x in items if x["type"] != "REAL_PUBLICATION_METADATA"] + papers[:MAX_PAPERS_SHOWN],
+                         "papers_total": len(papers), "paper_ids": [x["id"] for x in papers if x["id"]],
+                         "types": sorted({x["type"] for x in items})}
+    return {"scrolls": scrolls, "campaign": provenance.campaign_sources(q), "note": provenance.CONTEXT_ONLY}
+
+
 def decision_brief(q, champion, rows) -> dict:
+    """`champion` is the claim the brief is about: the best-supported scroll (science.py), or None."""
     c = q.c
-    harm = c.effect_direction > 0
+    sci = (q.science or {}).get("scrolls", {})
     if champion:
         m, st = champion.m, champion.st
         m2, m3, m4 = m[2], m[3], m[4]
         o = next(x for x in c.outcomes if x.key == st.outcome)
         rr = math.exp(m4["beta_used"])
-        if harm:
-            decision = "SAFETY SIGNAL CONFIRMED: WARN AND MONITOR"
-            rec = (f"Treat the rise in {_lower(o.label)} with {_lower(c.drug)} as a real safety signal against "
-                   f"{_comp(c)}: update prescriber guidance and monitor it prospectively.")
+        harm = st.direction > 0          # the claim's own direction, never the campaign's
+        status = (sci.get(champion.id) or {}).get("status", "PROVISIONALLY_SUPPORTED")
+        confirmed = status == "SUPPORTED_ON_SYNTHETIC_VALIDATION"
+        who = "" if st.subgroup == "everyone" else f" in the {st.subgroup} subgroup"
+        if not confirmed:
+            decision = "PROVISIONALLY SUPPORTED: CONFIRM ON INDEPENDENT DATA BEFORE ACTING"
+            rec = (f"The claim that {_lower(c.drug)} {'raises' if harm else 'lowers'} {_lower(o.label)}{who} beat "
+                   f"{_comp(c)} on the holdout, but it has not passed an independent confirmation yet. Confirm it on "
+                   "data that was never opened before acting on it.")
+        elif harm:
+            decision = "SAFETY SIGNAL SUPPORTED IN THE SIMULATION: STUDY IT IN REAL-WORLD DATA"
+            rec = (f"In this simulated cohort, the rise in {_lower(o.label)}{who} with {_lower(c.drug)} against "
+                   f"{_comp(c)} survived the holdout and an independent sealed vault. Treat it as a hypothesis worth a "
+                   "real-world pharmacoepidemiology study, not as a confirmed harm.")
         else:
             decision = "PRIORITISE A CONFIRMATORY RANDOMISED TRIAL"
             rec = (f"Prioritise a randomised trial of {_lower(c.drug)} against {_comp(c)} for "
-                   f"{_lower(o.label)}. The observational signal survived every trap, but it is still observational.")
+                   f"{_lower(o.label)}{who}. The observational signal survived every trap, but it is still observational.")
         dmg = champion.damage
 
         def hit(key):
@@ -183,24 +242,50 @@ def decision_brief(q, champion, rows) -> dict:
             _ev(f"Replicated in {len(m3['replicating'])} of {len(m3['sites'])} EHR sites; lab concentration "
                 f"H = {m3['h_lab']:.2f}." + hit("hlab"), champion.encounters.get("hlab")),
         ]
+        t = q.trial or {}
+        vault = ("The sealed vault was opened once, by the Trial of Truth: " + t.get("confirmation_label", "").lower() + "."
+                 if t.get("evaluated") else "The sealed vault is kept untouched for a later validation run.")
         uncertainty = (f"The rate ratio used was {rr:.2f}, from one simulated network. Unmeasured confounding cannot be "
-                       f"ruled out, and {'no' if m3['n_rct'] == 0 else m3['n_rct']} completed human RCT"
-                       f"{'' if m3['n_rct'] == 1 else 's'} back{'s' if m3['n_rct'] == 1 else ''} it. "+
-                       ("The second vaulted partition was opened once, by the Trial of Truth." if getattr(q, "vault_opened", None)
-                          else "A second vaulted partition is kept untouched for a later validation run."))
+                       f"ruled out. {'No' if m3['n_rct'] == 0 else m3['n_rct']} completed randomized trial"
+                       f"{'' if m3['n_rct'] == 1 else 's'} {'is' if m3['n_rct'] == 1 else 'are'} registered on the topic; "
+                       f"their results were not assessed here, so they neither support nor refute the claim. {vault}")
+        if t.get("evaluated") and t.get("scroll") == champion.id:
+            sk = t.get("skill") or {}
+            evidence.append(_ev(f"Trial of Truth on the sealed vault: SS = {sk.get('ss_oos') or 0:+.4f}, paired p = "
+                                f"{sk.get('p_dm') if sk.get('p_dm') is not None else 1:.3g}; {t.get('confirmation_label')}.",
+                                None, _seq(q, "trial_result")))
     else:
         best = max((r for r in rows if r["skill"] and r["status"] == "active"),
                    key=lambda r: r["skill"]["ss_oos"] if r["skill"]["ss_oos"] is not None else -9, default=None)
-        decision = "BASELINE HOLDS: NOT SUPPORTED"
-        rec = (f"Do not act on these claims. No scroll predicted unseen patients better than {_comp(c)} "
-               f"with no drug effect, so the evidence for {_lower(c.drug)} is inconclusive.")
+        statuses = [s["status"] for s in sci.values()]
+        open_ = [r for r in rows if r["science"] and r["science"]["status"] == "INCONCLUSIVE"]
+        if open_:
+            decision = "BASELINE HOLDS: NO CONFIRMED DISCOVERY (INCONCLUSIVE)"
+            rec = (f"Do not act on these claims. No claim was supported against {_comp(c)}. For "
+                   + ", ".join(r["name"] for r in open_[:3]) + " the evidence is too weak or too imprecise either way: "
+                   "a real but small effect cannot be ruled out, and not significant is not the same as no effect.")
+        elif statuses and all(s in ("CONTRADICTED", "INVALID_ANALYSIS") for s in statuses):
+            decision = "BASELINE HOLDS: NO CONFIRMED DISCOVERY (CLAIMS CONTRADICTED OR INVALID)"
+            rec = (f"Do not act on these claims. Each was either ruled out by the Judge's reference analysis (no "
+                   f"important effect in the claimed direction) or analysed invalidly; none beat {_comp(c)}.")
+        else:
+            decision = "BASELINE HOLDS: NO CONFIRMED DISCOVERY"
+            rec = (f"Do not act on these claims. No scroll predicted unseen patients better than {_comp(c)} "
+                   f"with no drug effect, so the evidence for {_lower(c.drug)} is inconclusive.")
         evidence = []
         if best:
             evidence.append(_ev(f"Best surviving scroll: {best['name']} reached SS = {best['skill']['ss_oos']:+.4f} "
                                 f"(paired loss test p = {best['skill']['p_dm']:.3g}), which is not a reliable gain.",
                                 best["encounters"].get("final")))
-        uncertainty = ("A real effect too small for this cohort cannot be ruled out; a larger cohort or a randomised trial "
-                       "could still find one.")
+        for r in rows:
+            s = r["science"]
+            if s and s["status"] in ("CONTRADICTED", "INCONCLUSIVE") and s["rr_reference"] is not None:
+                evidence.append(_ev(f"{r['name']}: reference rate ratio {s['rr_reference']:.2f} (95% CI {s['rr_lo']:.2f} to "
+                                    f"{s['rr_hi']:.2f}) in the claim's subgroup: {s['status'].lower()}.", None,
+                                    _seq(q, "scientific_status", r["id"])))
+        uncertainty = ("A real effect too small for this cohort cannot be ruled out where a claim is INCONCLUSIVE; a larger "
+                       "cohort or a randomised trial could still find one. A CONTRADICTED claim's interval excludes any "
+                       f"important effect (a {round(100 * (1 - rules.MIE_RR))}% change) in its claimed direction.")
     failed = []
     for r in rows:
         if champion and r["id"] == champion.id:
@@ -208,10 +293,22 @@ def decision_brief(q, champion, rows) -> dict:
         worst = max(r["damage"].items(), key=lambda kv: kv[1], default=None)
         if worst and worst[1] > 0:
             failed.append(_ev(f"{r['name']} (\"{r['claim']}\"): hardest hit by {_lower(rules.TRAP_LABELS[worst[0]])} "
-                              f"({worst[1]} HP){', and shattered' if r['status'] != 'active' else ''}.",
+                              f"({worst[1]} HP){', and shattered' if r['status'] == 'shattered' else ''}"
+                              f"{', and withdrawn' if r['status'] == 'withdrawn' else ''}.",
                               r["encounters"].get(worst[0])))
+    chain = [provenance.chain(q, f"E{i + 1}", e["text"], e["cite"], _method_of(champion, e["cite"]))
+             for i, e in enumerate(evidence + failed) if e["cite"]]
     return {"decision": decision, "recommendation": rec, "evidence": evidence, "misleading": failed,
-            "uncertainty": uncertainty, "truth": c.truth, "disclaimer": DISCLAIMER}
+            "uncertainty": uncertainty, "truth": c.truth, "disclaimer": DISCLAIMER, "provenance": chain}
+
+
+def _method_of(champion, cite: str | None) -> str:
+    """Which Judge method produced the encounter a brief statement cites."""
+    if champion is not None:
+        for term, enc in champion.encounters.items():
+            if enc == cite and term in provenance.METHODS:
+                return term
+    return "final"
 
 
 def _comp(c) -> str:
@@ -225,8 +322,14 @@ def _lower(s: str) -> str:
     return s if head[:2].isupper() or any(ch.isdigit() for ch in head) else s[0].lower() + s[1:]
 
 
-def _ev(text: str, cite: str | None) -> dict:
-    return {"text": text, "cite": cite}
+def _ev(text: str, cite: str | None, seq: int | None = None) -> dict:
+    """A brief statement and where its numbers live: an encounter id, or a ledger row number."""
+    return {"text": text, "cite": cite, "seq": seq}
+
+
+def _seq(q, action: str, agent_id: str | None = None) -> int | None:
+    return next((e.seq for e in reversed(q.ledger.events)
+                 if e.action == action and (agent_id is None or e.agent_id == agent_id)), None)
 
 
 def _r(x):

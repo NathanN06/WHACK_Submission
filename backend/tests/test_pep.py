@@ -107,7 +107,10 @@ def test_the_real_effect_is_validated_and_the_hype_shatters(tmp_path):
     assert verdict["PREPRINT"] == "SHATTERED"
     assert verdict["HYPE"] in ("SHATTERED", "NOT BETTER")  # never time-zero aligned, so it cannot validate
     assert result["brief"]["decision"].startswith("PRIORITISE")
-    assert all(ev["cite"] for ev in result["brief"]["evidence"])
+    seqs = {e.seq for e in events}
+    # every statement points at the ledger: an encounter id, or the row number of the Judge's ruling
+    assert all(ev["cite"] or ev["seq"] in seqs for ev in result["brief"]["evidence"])
+    assert result["science"]["best_supported"]["status"] == "SUPPORTED_ON_SYNTHETIC_VALIDATION"
     assert any(e.action == "shatter" for e in events) and any(e.action == "benchmark" for e in events)
 
 
@@ -155,12 +158,22 @@ def test_a_scroll_loses_exactly_its_formula_per_level(tmp_path):
             assert lost <= cap
 
 
+def _numbers(x) -> list:
+    if isinstance(x, dict):
+        return [n for v in x.values() for n in _numbers(v)]
+    if isinstance(x, list):
+        return [n for v in x for n in _numbers(v)]
+    return [x] if isinstance(x, (int, float)) and not isinstance(x, bool) else []
+
+
 def test_the_hero_never_writes_numbers_only_choices(tmp_path):
     events, _ = run("LONGEVITY_STACK", tmp_path)
     for e in events:
         if e.actor == "agent":
             assert e.action == "decision" and e.hp_delta is None and e.verdict is None
-            assert set(e.result) <= {"abilities", "source", "menu", "decision"}
+            assert set(e.result) <= {"abilities", "source", "menu", "decision", "execution", "saw"}
+            # what it chose, why, and what it saw: flags and finding ids, never a number
+            assert _numbers(e.result["decision"]) == [] and _numbers(e.result["saw"]) == []
 
 
 # ---------- code-review regressions ----------

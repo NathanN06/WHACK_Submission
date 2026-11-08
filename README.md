@@ -116,4 +116,12 @@ not real findings and not medical advice.
   citations, what misled the other scrolls, uncertainty, the composite score with the Gatekeeper's
   benchmark row, HP per level, damage by trap, and the planted truth.
 
+- Every claim gets a **scientific status** that is decided apart from HP and the game: supported on synthetic
+  validation, provisionally supported, inconclusive, contradicted, or invalid analysis
+  ([docs/gauntlet-rules.md](docs/gauntlet-rules.md#research-integrity-analysis-version-pep-judge-22)).
+- Each live quest draws a fresh synthetic cohort; a sealed vault confirms a claim at most once. A champion persists
+  per campaign and defends its title against new challengers on fresh cohorts.
+- Truth-versus-luck benchmark (120 seeded worlds, the whole pipeline, scored against the planted truth after each run):
+  `.venv/bin/python scripts/evaluate_pep.py --seeds 20 --out docs`. Results: [docs/evaluation_summary.json](docs/evaluation_summary.json).
+
 Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

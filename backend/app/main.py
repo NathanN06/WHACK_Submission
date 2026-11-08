@@ -20,7 +20,8 @@ from .arena.orchestrator import Arena
 from .pep import rules as pep_rules
 from .pep.agents import make_hero
 from .pep.campaign import PepQuest
-from .pep.hypotheses import DB_PATH as EVIDENCE_DB, MAX_SCROLLS
+from .llm import client_or_none
+from .pep.hypotheses import DB_PATH as EVIDENCE_DB, MAX_SCROLLS, MIN_SCROLLS
 from .pep.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS, HERO
 from .pep.director import DirectorError, Expedition
 from .pep.models import QuestEvent
@@ -162,9 +163,20 @@ class QuestRequest(BaseModel):
     llm: bool | None = None  # None = Claude plays the Alchemist if an API key is set
     replay: str | None = None
     pace: float = Field(0.0, ge=0, le=5)
-    seed: int = 0
+    seed: int | None = Field(None, ge=0, le=1_000_000)  # None: a fresh synthetic cohort no quest has used
     interactive: bool = False  # True: the quest waits for the screen and the Research Director's console is open
-    scrolls: int | None = Field(None, ge=1, le=MAX_SCROLLS)  # None: the three hand-written scrolls; else the Scribe forms this many
+    scrolls: int | None = Field(None, ge=MIN_SCROLLS, le=MAX_SCROLLS)  # None: the three hand-written scrolls; else the Scribe forms this many
+
+
+def _registry_dir() -> Path:
+    """Research state that outlives a quest (the vault registry and the champions) lives beside the quests."""
+    return Path(QUESTS) / "registry"
+
+
+def _stores():
+    from .pep.registry import ChampionStore, VaultRegistry
+    d = _registry_dir()
+    return VaultRegistry(d / "vaults.json"), ChampionStore(d / "champions.json")
 
 
 def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
@@ -194,15 +206,19 @@ def start_quest(req: QuestRequest):
         cid = _campaign_id(req.campaign)
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
         use_llm = _use_llm(req.llm)
-        scribe = None
+        scribe = skeptic = None
         # The Scribe writes with Claude whenever a key is set, even if the scripted hero plays: otherwise the
         # script hands back the campaign's hand-written scrolls and every quest reads the same.
         if req.scrolls is not None and (use_llm or llm_available()):
-            from .arena.agents import ENV_FILE, anthropic_complete, load_env_key
-            load_env_key(ENV_FILE)
-            scribe = anthropic_complete()
-        quest = PepQuest(quest_id, cid, ledger, make_hero(use_llm), seed=req.seed, pace=req.pace,
-                         n_scrolls=req.scrolls, scribe=scribe)
+            scribe = client_or_none(True)
+        if use_llm:
+            skeptic = client_or_none(True)
+        vaults, champions = _stores()
+        # Every live quest gets its own synthetic cohort, so its holdout and sealed vault are genuinely unseen.
+        seed = req.seed if req.seed is not None else vaults.assign_seed(cid, quest_id)
+        quest = PepQuest(quest_id, cid, ledger, make_hero(use_llm), seed=seed, pace=req.pace,
+                         n_scrolls=req.scrolls, scribe=scribe, registry=vaults,
+                         champions=champions if req.scrolls is not None else None, skeptic=skeptic)
         if req.interactive:
             Expedition(quest)
         thread = threading.Thread(target=quest.run, daemon=True)
@@ -328,10 +344,21 @@ def quest_director(quest_id: str):
 
 @app.get("/api/campaigns")
 def campaigns():
-    """The four peptide campaigns the title screen offers."""
+    """The four peptide campaigns the title screen offers, each with its reigning champion (if any)."""
+    from .pep.campaign import _card
+    _, store = _stores()
+    champs = store.all()
     return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
              "comparator": c.comparator, "target": c.outcomes[0].label, "scrolls": [s.title for s in c.scrolls],
-             "simulated": True, "max_scrolls": MAX_SCROLLS, "real_evidence": EVIDENCE_DB.exists()} for c in CAMPAIGNS.values()]
+             "simulated": True, "min_scrolls": MIN_SCROLLS, "max_scrolls": MAX_SCROLLS,
+             "real_evidence": EVIDENCE_DB.exists(), "champion": _card(champs.get(c.id))} for c in CAMPAIGNS.values()]
+
+
+@app.get("/api/champions")
+def champions():
+    """Every reigning champion with its full record: lineage, results, cohort fingerprints and source ids."""
+    _, store = _stores()
+    return store.all()
 
 
 @app.get("/api/quests-rules")
@@ -341,7 +368,8 @@ def quest_rulebook():
     return {"levels": R.LEVELS, "abilities": R.ABILITIES, "enemies": R.ENEMIES, "d_max": R.D_MAX,
             "score_weights": R.SCORE_WEIGHTS, "score_rules": R.SCORE_RULES, "verdicts": R.VERDICTS,
             "traps": R.TRAPS, "trap_labels": R.TRAP_LABELS, "archetypes": ARCHETYPES, "hero": HERO,
-            "starting_hp": R.STARTING_HP, "starting_credits": R.STARTING_CREDITS}
+            "starting_hp": R.STARTING_HP, "starting_credits": R.STARTING_CREDITS, "statuses": R.STATUSES,
+            "status_order": R.STATUS_ORDER, "multiplicity": R.MULTIPLICITY_FAMILIES, "mie_rr": R.MIE_RR}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend" / "src", html=True), name="ui")

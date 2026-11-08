@@ -66,6 +66,16 @@ async function boot() {
   if (hash.get("watch")) { G.pick = hash.get("watch").toUpperCase(); startGame("demo"); }
 }
 
+// The reigning champion of a campaign, shown before a repeat quest: its historical result is context, not new evidence.
+function championCard(ch) {
+  if (!ch) return "";
+  const confirmed = ch.confirmations ? `${ch.confirmations} independent confirmation${ch.confirmations === 1 ? "" : "s"}` : "not independently confirmed";
+  return `<span class="champ-badge" title="${esc(ch.label || "")}"><b>INCUMBENT · Previous campaign winner</b>
+      <span>${esc(ch.title || "")}: ${esc(ch.claim || "")}</span>
+      <span class="status s-${esc(ch.status_now || ch.status || "")}">${esc(statusLabel(ch.status_now || ch.status))}</span>
+      <small>${esc(confirmed)} · ${esc(ch.label || "Simulated cohort: not clinical evidence.")} Fresh challengers will face it.</small></span>`;
+}
+
 function renderCards() {
   $("cards").innerHTML = G.campaigns.map((c) => `
     <button class="card" role="radio" aria-checked="${c.letter === G.pick}" data-letter="${c.letter}">
@@ -73,6 +83,7 @@ function renderCards() {
       <strong>${esc(c.title)}</strong>
       <span class="card-q">${esc(c.question)}</span>
       <span class="card-meta">${esc(c.drug)} vs ${esc((c.comparator || "").replace(/ \(active comparator\)/, ""))} <em>SIMULATED</em></span>
+      ${championCard(c.champion)}
     </button>`).join("");
   for (const b of document.querySelectorAll(".card")) {
     b.onclick = () => {
@@ -484,9 +495,12 @@ function renderParty() {
       li.className = "pcard hero-card";
       list.prepend(li);
     }
+    const mode = heroMode(s), fb = (s.modes && s.modes.SCRIPTED_FALLBACK) || 0;
+    const modeText = { LIVE_CLAUDE: "Claude, live", SCRIPTED: "Scripted plan", MIXED: `Claude with ${fb} scripted fallback${fb === 1 ? "" : "s"}` }[mode] || mode;
     const html = `<img src="${portrait("hero")}" alt="" width="48" height="48">
       <div class="pinfo"><strong>${esc(s.hero.short || s.hero.name)}</strong> <small>the hero</small>
-        <div class="meta"><span>${standing} of ${s.order.length} scrolls intact</span></div>
+        <div class="meta"><span>${standing} of ${s.order.length} scrolls intact</span>
+          <span class="mode m-${mode}" title="Who chose the abilities: every decision row in the ledger records its execution mode">${esc(modeText)}</span></div>
         <div class="buffs"><span>chooses abilities, never numbers</span></div></div>`;
     if (li._html !== html) { li.innerHTML = html; li._html = html; }
   }
@@ -507,7 +521,7 @@ function renderParty() {
       li.onkeydown = (ev) => { if (ev.key === "Enter" || ev.key === " ") { ev.preventDefault(); openScroll(id); } };
       list.appendChild(li);
     }
-    const st = a.status !== "active" ? "fallen" : (s.fighter === id && s.enemy ? "fighting" : "");
+    const st = a.status === "withdrawn" ? "fallen withdrawn" : a.status !== "active" ? "fallen" : (s.fighter === id && s.enemy ? "fighting" : "");
     li.className = `pcard ${st} a-${a.archetype}`;
     li.title = a.claim;
     li.querySelector("strong").textContent = a.name.replace(/^The /, "");
@@ -520,7 +534,9 @@ function renderParty() {
     tweenNumber(span, a.hp, G.reduced ? 0 : 500, " HP");
     const cast = a.abilities[s.level] || [];
     const meta = `<span title="Research credits left">◆ ${a.credits}</span>
-      ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}
+      ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}" title="The game result">${esc(verdictLabel(a.verdict))}</span>` : ""}
+      ${a.science ? `<span class="status s-${esc(a.science.status)}" title="The scientific status, decided apart from HP">${esc(statusLabel(a.science.status))}</span>` : ""}
+      ${a.incumbent ? '<span class="cast" title="The reigning champion, defending its title">INCUMBENT</span>' : ""}
       ${cast.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join("")}`;
     const m = li.querySelector(".meta");
     if (m._html !== meta) { m.innerHTML = meta; m._html = meta; }
@@ -545,16 +561,31 @@ function openScroll(id) {
          `<li><a href="${esc(p.url)}" target="_blank" rel="noopener">${esc(p.title)}</a> ${p.year ? `(${p.year})` : ""}</li>`).join("")}</ul>` : ""}
        <p class="muted">Social posts and the patient cohort the Judge tests this claim on are simulated.</p>`
     : `<p class="muted">Simulated evidence: this scroll's papers, posts and patients come from the campaign's simulated world.</p>`;
-  const lines = Object.keys(a.lines).sort().map((lv) =>
-    `<li><b>Level ${ROMAN[lv] || lv}:</b> “${esc(a.lines[lv])}”${(a.abilities[lv] || []).length
-      ? ` · cast ${a.abilities[lv].map((k) => esc(abilityName(k))).join(", ")}` : ""}</li>`).join("");
+  const lines = Object.keys(a.lines).sort().map((lv) => {
+    const d = a.decisions[lv] || {}, rec = d.record || {}, ex = d.execution || {};
+    return `<li><b>Level ${ROMAN[lv] || lv}:</b> “${esc(a.lines[lv])}”${(a.abilities[lv] || []).length
+      ? ` · cast ${a.abilities[lv].map((k) => esc(abilityName(k))).join(", ")}` : ""}
+      ${rec.decision_reason ? `<br><small>${esc(rec.concern_code || "")} · ${esc(rec.decision_reason)}${(rec.cited_signals || []).length
+        ? ` (cites ${rec.cited_signals.map(esc).join(", ")})` : ""}</small>` : ""}
+      ${ex.execution_mode ? `<br><small class="mode m-${esc(ex.execution_mode)}">${esc(ex.execution_mode.replace(/_/g, " ").toLowerCase())}${ex.fallback_reason ? `: ${esc(ex.fallback_reason)}` : ""}</small>` : ""}</li>`;
+  }).join("");
+  const t = a.typed || {}, L = a.lineage || {}, sci = a.science, sk = a.skeptic;
   dlg.innerHTML = `<p class="sub">${esc(a.title)} · ${esc(a.nickname || "")}</p>
     <h3>${esc(a.name)}</h3>
     <blockquote class="hyp">${esc(a.claim)}</blockquote>
     <table class="nums">
-      <tr><th>Outcome tested</th><td>${esc(a.outcome || "")}</td></tr>
+      <tr><th>Typed claim (what the Judge tests)</th><td>${esc(t.direction || "")} ${esc(a.outcome || "")} · ${esc(t.subgroup || "everyone")} ·
+        vs ${esc(t.comparator || "")} · ${esc(t.estimand || "")}</td></tr>
+      ${t.falsifier ? `<tr><th>Would be falsified by</th><td>${esc(t.falsifier)}</td></tr>` : ""}
       <tr><th>Where it came from</th><td>${esc(a.origin || "")}</td></tr>
-      <tr><th>Status</th><td>${a.hp} HP · ◆ ${a.credits}${a.verdict ? ` · <span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}</td></tr>
+      ${L.hypothesis_id ? `<tr><th>Hypothesis</th><td>${esc(L.hypothesis_id)} v${esc(L.version)} · ${esc((L.origin_mode || "").replace(/_/g, " ").toLowerCase())}
+        ${a.planSha ? ` · locked ${esc(a.planSha.slice(0, 12))}` : ""}</td></tr>` : ""}
+      ${a.incumbent ? `<tr><th>Champion history</th><td>${esc(statusLabel(a.incumbent.status))} · ${a.incumbent.confirmations || 0} independent confirmation(s).
+        Context only: none of it counts again as evidence.</td></tr>` : ""}
+      <tr><th>Game</th><td>${a.hp} HP · ◆ ${a.credits}${a.verdict ? ` · <span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(verdictLabel(a.verdict))}</span>` : ""}</td></tr>
+      ${sci ? `<tr><th>Scientific status</th><td><span class="status s-${esc(sci.status)}">${esc(statusLabel(sci.status))}</span>
+        ${esc((sci.reasons || []).join(" "))}</td></tr>` : ""}
+      ${sk && sk.result ? `<tr><th>Skeptic's test</th><td>${esc(sk.result.test)}: ${esc(sk.result.outcome.toLowerCase())}</td></tr>` : ""}
     </table>
     ${evidence}
     ${lines ? `<h3>The Alchemist's choices</h3><ul class="lines">${lines}</ul>` : ""}
@@ -581,10 +612,14 @@ function renderHud() {
   hud.querySelector("strong").textContent = a.name;
   for (const bar of hud.querySelectorAll(".hp i, .hp .trail")) bar.style.width = `${Math.max(0, a.hp)}%`;
   tweenNumber(hud.querySelector(".hp span"), a.hp, swap || G.reduced ? 0 : 500, " HP");
-  hud.querySelector("small").textContent = `◆ ${a.credits} · ${a.design === "new_user" || a.buffs.includes("TIME-ZERO ALIGNED") ? "time-zero aligned" : "as carried"}`;
+  hud.querySelector("small").textContent = `◆ ${a.credits} · ${a.design === "new_user" || a.buffs.includes("TIME-ZERO ALIGNED") ? "time-zero aligned" : "as carried"}`
+    + (a.science ? ` · ${statusLabel(a.science.status)}` : "");
 }
 
 function abilityName(k) { return (G.state.rules && G.state.rules.abilities[k] && G.state.rules.abilities[k].name) || k; }
+
+// The game verdict, worded so it is never mistaken for the scientific status.
+function verdictLabel(v) { return v === "VALIDATED" ? "BEAT THE GUARDIAN" : v; }
 
 function renderEnemy() {
   const e = G.state.enemy, plate = $("enemy-plate");
@@ -666,9 +701,26 @@ function inspect(e) {
     if (nums.length) html += `<table class="nums">${nums.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${fmt(v)}</td></tr>`).join("")}</table>`;
     if (e.encounter) html += `<details><summary>Telemetry record</summary><pre>${esc(JSON.stringify(e.encounter, null, 2))}</pre></details>`;
     if (e.action === "decision") {
-      const picks = (e.result && e.result.abilities) || [];
+      const picks = (e.result && e.result.abilities) || [], d = (e.result && e.result.decision) || {}, ex = (e.result && e.result.execution) || {};
+      const saw = (e.result && e.result.saw) || {};
       html += `<p>Cast: ${picks.length ? picks.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join(" ") : "nothing"}
         ${e.cost ? ` for ${e.cost} credits` : ""}. Chosen by ${esc((e.result && e.result.source) === "claude" ? "Claude, as the Alchemist" : "the scroll's scripted plan")}.</p>`;
+      if (d.decision_reason) {
+        html += `<dl class="insp"><dt>Concern</dt><dd>${esc(d.concern_code || "NONE")}</dd>
+          <dt>Why</dt><dd>${esc(d.decision_reason)}</dd>
+          ${d.expected_tradeoff ? `<dt>Trade-off</dt><dd>${esc(d.expected_tradeoff)}</dd>` : ""}
+          <dt>Next action</dt><dd>${esc(d.next_research_action || "TEST")}</dd>
+          <dt>Cites</dt><dd>${(d.cited_signals || []).map(esc).join(", ") || "nothing"}</dd>
+          <dt>Execution</dt><dd><span class="mode m-${esc(ex.execution_mode || "SCRIPTED")}">${esc((ex.execution_mode || "SCRIPTED").replace(/_/g, " "))}</span>
+            ${ex.fallback_reason ? ` · fallback: ${esc(ex.fallback_reason)}` : ""}${ex.prompt_version ? ` · prompt ${esc(ex.prompt_version)}` : ""}</dd></dl>`;
+      }
+      if (saw.telemetry) {
+        html += `<details><summary>What the hero saw before choosing (blinded: no outcomes)</summary><table class="nums">${
+          Object.entries(saw.telemetry).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${esc(Array.isArray(v) ? v.join(", ") || "none" : v)}</td></tr>`).join("")}
+          ${(saw.released || []).length ? `<tr><th>Earlier findings</th><td>${saw.released.map((f) => esc(f.id)).join(", ")}</td></tr>` : ""}</table></details>`;
+      } else if (saw.blocked) {
+        html += `<p class="muted">The planning payload was blocked by the leak guard, so the script decided.</p>`;
+      }
     }
   }
   $("insp-body").innerHTML = html;
@@ -684,6 +736,7 @@ function whoOf(e) {
   if (e.action === "gatekeeper" || e.action === "benchmark") return "Gatekeeper";
   if (e.actor === "director") return "Director";
   if (e.action === "hero_reply" || e.action === "self_assessment") return "Hero";
+  if (/^skeptic/.test(e.action)) return e.action === "skeptic_result" ? "Judge" : "Skeptic";
   return a ? a.name.replace(/^The /, "") : e.actor === "judge" ? "Judge" : "System";
 }
 
@@ -787,24 +840,47 @@ async function showHow() {
       : JSON.parse((await fetch(`demo/demo-${G.pick}.jsonl`).then((r) => r.text())).split("\n", 1)[0]).result.rules;
   } catch { /* shown without the tables */ }
   const levels = rules ? Object.entries(rules.levels).map(([l, v]) => `<tr><td>${ROMAN[l]}</td><td>${esc(v.name)}</td><td>${esc(v.trap)}</td><td><code>${esc(v.rule)}</code></td><td>${rules.d_max[l]}</td></tr>`).join("") : "";
-  const abil = rules ? Object.values(rules.abilities).map((a) => `<tr><td>${esc(a.name)}</td><td>${ROMAN[a.level]}</td><td>${a.cost}</td><td>${esc(a.effect)}</td></tr>`).join("") : "";
+  const abil = rules ? Object.values(rules.abilities).map((a) => `<tr><td>${esc(a.name)}</td><td>${ROMAN[a.level]}</td><td>${a.cost}</td><td>${esc(a.effect)}${a.tradeoff ? `<br><small class="muted">${esc(a.tradeoff)}</small>` : ""}</td></tr>`).join("") : "";
+  const statuses = rules && rules.statuses ? Object.entries(rules.statuses).map(([k, v]) =>
+    `<tr><td><span class="status s-${esc(k)}">${esc(statusLabel(k))}</span></td><td>${esc(v)}</td></tr>`).join("") : "";
+  let bench = "";
+  try {   // the truth-versus-luck benchmark, if one was recorded (scripts/evaluate_pep.py --out frontend/src/demo)
+    const b = await fetch("demo/evaluation_summary.json").then((r) => (r.ok ? r.json() : Promise.reject()));
+    const m = b.metrics, rate = (w) => (w && w.n ? `${w.k}/${w.n} (${(100 * w.rate).toFixed(1)}%, 95% CI ${(100 * w.lo).toFixed(1)} to ${(100 * w.hi).toFixed(1)}%)` : "n/a");
+    const ex = b.examples || {};
+    bench = `<h3>Does it tell truth from luck? The benchmark</h3>
+      <p>${m.worlds.total} independent simulated worlds (seeds ${b.seeds[0]} to ${b.seeds[b.seeds.length - 1]}), ${m.claims} claims, the whole
+      pipeline each time; the planted truth is read only after a world finishes.</p>
+      <table class="nums"><tr><th>Null worlds with any supported claim (familywise error)</th><td>${rate(m.familywise_error_null_worlds)}</td></tr>
+        <tr><th>False claims supported</th><td>${rate(m.false_support_rate)}</td></tr>
+        <tr><th>Sign errors (a claim supported the wrong way round)</th><td>${m.sign_errors}</td></tr>
+        <tr><th>True claims supported (valid design)</th><td>${rate(m.power_true_claims_valid_design)}</td></tr>
+        <tr><th>True claims wrongly contradicted</th><td>${rate(m.true_claims_wrongly_contradicted)}</td></tr>
+        <tr><th>Reference 95% interval covers the truth</th><td>${rate(m.reference_ci_coverage)}</td></tr>
+        <tr><th>Reused vaults blocked from confirming</th><td>${rate(m.vault_reuse_blocked)}</td></tr>
+        <tr><th>Live Claude vs scripted</th><td>${esc(b.live_vs_scripted.status)}${b.live_vs_scripted.reason ? `: ${esc(b.live_vs_scripted.reason)}` : ""}</td></tr></table>
+      ${ex.false_discovery_defeated && ex.true_discovery_survived ? `<p class="small">A false discovery defeated: ${esc(ex.false_discovery_defeated.world)}
+        ${esc(ex.false_discovery_defeated.scroll)} (planted effect ${ex.false_discovery_defeated.planted_log_hr}) ended ${esc(statusLabel(ex.false_discovery_defeated.status))}.
+        A true discovery that survived: ${esc(ex.true_discovery_survived.world)} ${esc(ex.true_discovery_survived.scroll)} ended
+        ${esc(statusLabel(ex.true_discovery_survived.status))}.</p>` : ""}`;
+  } catch { /* no benchmark recorded */ }
   dlg.innerHTML = `<h2>How it works</h2>
-    <p>Each campaign is a <strong>simulated</strong> world with planted, known effects: an EHR cohort across five sites,
-    a social-media corpus, a literature base and a trial registry for each claim. Nothing in it is a real finding or
-    medical advice. The truth is revealed at the end so you can see whether the Judge got it right.</p>
-    <p>One hero, the Alchemist-Epidemiologist, carries three hypothesis scrolls: a Hype Scroll found on social media,
-    a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study. Each scroll starts with
-    100 HP (research integrity) and 100 credits, and the hero buys abilities for it each level. The hero never
-    produces a number: the deterministic Statistical Judge measures everything and applies fixed rules,
-    <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>. A scroll at 0 HP shatters.</p>
-    <p>The final boss, the Guardian of False Discoveries, matches unseen holdout patients on the propensity score and
-    compares each scroll's predictions with the Gatekeeper's benchmark: the active comparator with no drug effect.
-    A scroll is <strong>validated</strong> only if it lowers the prediction loss (SS<sub>oos</sub> &gt; 0.002) and a
-    paired loss test says the gain is unlikely to be luck (p &lt; 0.05). If none is, the verdict is
-    <strong>Baseline Holds</strong>.</p>
+    <p>Each campaign is a <strong>simulated</strong> world with planted, known effects: an EHR cohort across five sites
+    and a social-media corpus; the papers and trial records behind a scroll are real metadata, used as context only.
+    Nothing in it is a real finding or medical advice. The truth is revealed at the end so you can see whether the Judge got it right.</p>
+    <p>The path: <b>Propose → Design → Test → Critique → Replicate → Lock → Confirm → Report</b>. The Scribe proposes 2 to 6
+    typed claims (outcome, direction, subgroup); the Alchemist designs each test from blinded diagnostics that never
+    contain an outcome; the Judge tests them through four exploratory levels; the Skeptic critiques; the Bridge locks one
+    claim and the Trial of Truth confirms it once on a sealed vault that no level ever reads.</p>
+    <p>Each scroll starts with 100 HP (research integrity) and 100 credits. The hero never produces a number: the
+    deterministic Statistical Judge measures everything and applies fixed rules, <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>.
+    HP is the game. The <strong>scientific status</strong> is decided separately, by fixed rules, so a scroll can win the game and
+    still be unproven.</p>
+    ${statuses ? `<h3>Scientific statuses</h3><table class="nums">${statuses}</table>` : ""}
+    ${bench}
     ${levels ? `<h3>Levels</h3><table><thead><tr><th></th><th>Level</th><th>Trap</th><th>Damage rule</th><th>D<sub>max</sub></th></tr></thead><tbody>${levels}</tbody></table>` : ""}
-    ${abil ? `<h3>Abilities</h3><table><thead><tr><th>Ability</th><th>Level</th><th>Cost</th><th>Effect</th></tr></thead><tbody>${abil}</tbody></table>` : ""}
-    <h3>Composite score</h3><p>0.35 × out-of-sample skill + 0.25 × HP + 0.25 × traps falsified + 0.15 × efficiency (lift per credit).</p>
+    ${abil ? `<h3>Abilities</h3><table><thead><tr><th>Ability</th><th>Level</th><th>Cost</th><th>Effect and trade-off</th></tr></thead><tbody>${abil}</tbody></table>` : ""}
+    <h3>Composite score (the game)</h3><p>0.35 × out-of-sample skill + 0.25 × HP + 0.25 × traps falsified + 0.15 × efficiency (lift per credit).</p>
     <div class="dlg-buttons"><button class="btn gold" id="how-close">Close</button></div>`;
   dlg.showModal();
   $("how-close").onclick = () => dlg.close();

@@ -19,7 +19,7 @@ class Ledger:
         self.model = model  # the row shape: arena Event, or the gauntlet's QuestEvent
         self.path = Path(directory) / f"{run_id}.jsonl"
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text("")
+        self.path.write_text("", encoding="utf-8")
         self.events: list = []
         self.on_write = on_write  # optional callback, e.g. print each event live
         self._lock = threading.Lock()
@@ -28,7 +28,7 @@ class Ledger:
         with self._lock:
             event = self.model(run_id=self.run_id, seq=len(self.events) + 1, ts=time.time(), **fields)
             self.events.append(event)
-            with self.path.open("a") as f:
+            with self.path.open("a", encoding="utf-8") as f:
                 f.write(event.model_dump_json() + "\n")
         if self.on_write:
             self.on_write(event)
@@ -40,7 +40,7 @@ class Ledger:
 
 
 def load(path: str | Path, model=Event) -> list:
-    return [model.model_validate_json(line) for line in Path(path).read_text().splitlines() if line]
+    return [model.model_validate_json(line) for line in Path(path).read_text(encoding="utf-8").splitlines() if line]
 
 
 def preregister(g: Gladiator) -> str:

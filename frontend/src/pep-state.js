@@ -18,6 +18,9 @@ function initial() {
     enemy: null, fighter: null, last: null, gate: null, benchmark: false,
     events: [], encounters: 0, traps: { faced: 0, falsified: 0 }, shattered: 0,
     finale: null, stopped: false, error: null,
+    // research integrity: how each choice was made (live Claude, script, fallback), the locked analysis plan,
+    // the cohort, the reigning champion, and every claim's scientific status (separate from HP)
+    execution: null, modes: {}, plan: null, cohort: null, incumbent: null, defense: null, withdrawn: 0,
     // the Research Director's console and the endgame
     chat: [], mysteries: {}, intakes: [], mystery: null, adjust: [], secret: null,
     bridge: null, assessment: null, choice: null, evolution: null, version: "V1", spec: null, trial: null,
@@ -40,6 +43,8 @@ function agentFrom(a) {
     evidence: a.evidence || "simulated", realEvidence: a.real_evidence || null, how: "",
     hp: a.hp, credits: a.credits, buffs: a.buffs || [],
     status: "active", verdict: null, abilities: {}, lastDelta: null, lines: {},
+    typed: a.typed || null, lineage: a.lineage || null, incumbent: a.incumbent || null, planSha: a.plan_sha256 || null,
+    sources: null, decisions: {}, skeptic: null, science: null,
   };
 }
 
@@ -61,6 +66,7 @@ function reduce(s, e) {
     case "quest_start":
       s.campaign = r.campaign; s.rules = r.rules; s.archetypes = r.archetypes; s.simulated = r.simulated !== false;
       s.hero = r.hero || null; s.gatekeeper = r.gatekeeper || null;
+      s.execution = r.execution || null; s.cohort = r.cohort || null; s.incumbent = r.incumbent || null;
       break;
     case "hypotheses":
       s.hypotheses = r;   // how the Scribe formed the scrolls, and the real evidence counts it copied
@@ -68,10 +74,30 @@ function reduce(s, e) {
     case "recruit": {
       const ag = agentFrom(r.agent);
       ag.how = e.explain || "";
+      ag.sources = r.sources || null;
       s.agents[ag.id] = ag;
       if (!s.order.includes(ag.id)) s.order.push(ag.id);
       break;
     }
+    case "analysis_plan":
+      s.plan = r;
+      break;
+    case "withdraw":
+      s.withdrawn += 1;
+      if (s.active === e.agent_id) s.active = s.order.find((id) => s.agents[id].status === "active") || null;
+      break;
+    case "skeptic_challenge":
+      if (a) a.skeptic = { challenge: r.challenge, result: null };
+      break;
+    case "skeptic_result":
+      if (a) a.skeptic = { ...(a.skeptic || {}), result: { outcome: r.outcome, test: r.test, line: e.line, seq: e.seq } };
+      break;
+    case "scientific_status":
+      if (a) a.science = { ...(r.science || {}), numbers: r.numbers || {}, seq: e.seq };
+      break;
+    case "champion":
+      s.defense = r;
+      break;
     case "level_start":
       s.level = r.level; s.levelInfo[r.level] = r; s.enemy = null; s.fighter = null; s.gate = null;
       break;
@@ -80,9 +106,15 @@ function reduce(s, e) {
       s.gate = { text: r.text, level: e.level, seq: e.seq };
       if (e.action === "benchmark") s.benchmark = true;
       break;
-    case "decision":
-      if (a) { a.abilities[e.level] = r.abilities || []; a.lines[e.level] = e.line; }
+    case "decision": {
+      if (a) {
+        a.abilities[e.level] = r.abilities || []; a.lines[e.level] = e.line;
+        a.decisions[e.level] = { record: r.decision || null, execution: r.execution || null, saw: r.saw || null, source: r.source };
+      }
+      const mode = (r.execution && r.execution.execution_mode) || (r.source === "claude" ? "LIVE_CLAUDE" : "SCRIPTED");
+      s.modes[mode] = (s.modes[mode] || 0) + 1;
       break;
+    }
     case "encounter":
       s.enemy = { ...(r.enemy || {}), boss: !!r.boss }; s.fighter = null;
       break;
@@ -217,7 +249,25 @@ function beat(e) {
            mystery_cancelled: 0, mystery_summon: 1100, mystery_encounter: 1300, mystery_ability: 1000, mystery_result: 2200,
            mystery_return: 900, secret_level_start: 1800, secret_level_complete: 1200,
            bridge_enter: 2600, self_assessment: 600, bridge_choice: 1200, evolution_start: 1500, evolution_transform: 2600,
-           evolution_step: 1500, evolution_complete: 1800, spec_locked: 1800, trial_result: 3600 }[e.action] || 500;
+           evolution_step: 1500, evolution_complete: 1800, spec_locked: 1800, trial_result: 3600,
+           analysis_plan: 1600, withdraw: 1700, skeptic_start: 1800, skeptic_challenge: 1500, skeptic_result: 1800,
+           scientific_status: 900, champion: 2000 }[e.action] || 500;
+}
+
+// The scientific status as a short label, kept apart from HP and the game verdict.
+const STATUS_LABEL = {
+  SUPPORTED_ON_SYNTHETIC_VALIDATION: "SUPPORTED (synthetic)", PROVISIONALLY_SUPPORTED: "PROVISIONAL",
+  INCONCLUSIVE: "INCONCLUSIVE", CONTRADICTED: "CONTRADICTED", INVALID_ANALYSIS: "INVALID ANALYSIS",
+};
+function statusLabel(status) { return STATUS_LABEL[status] || status || ""; }
+
+// Who made the choices this run: "LIVE_CLAUDE", "SCRIPTED", or a mix with fallbacks.
+function heroMode(s) {
+  const m = s.modes || {}, live = m.LIVE_CLAUDE || 0, fb = m.SCRIPTED_FALLBACK || 0, sc = m.SCRIPTED || 0;
+  if (!live && !fb && !sc) return (s.execution && s.execution.hero) || "SCRIPTED";
+  if (live && !fb && !sc) return "LIVE_CLAUDE";
+  if (!live && !fb) return "SCRIPTED";
+  return "MIXED";
 }
 
 function findEncounter(events, id) {
@@ -225,5 +275,6 @@ function findEncounter(events, id) {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { NODES, initial, reduce, replay, nodeStates, filterEvents, beat, findEncounter, hpFor };
+  module.exports = { NODES, initial, reduce, replay, nodeStates, filterEvents, beat, findEncounter, hpFor,
+                     statusLabel, heroMode };
 }

@@ -69,3 +69,16 @@ def test_caught_rules():
     assert decoys.caught(decoys.EMPEROR, "champion", emperor="real")
     assert decoys.caught(decoys.EMPEROR, "dropped", emperor="fake")
     assert not decoys.caught(decoys.EMPEROR, "dead", emperor="real")
+
+
+def test_the_lucky_plan_is_computed_once_per_data_target_and_seed(monkeypatch):
+    from app.arena import decoys
+    from tests.fixtures import make_meals
+    calls = []
+    monkeypatch.setattr(decoys, "_LUCKY_CACHE", {})
+    monkeypatch.setattr(decoys, "lucky_gains", lambda train, target, seed: calls.append(seed) or [0.0, 1.0])
+    train = make_meals(10, seed=0)
+    assert decoys.plan(train, "rise", None, 0).lucky_source == 1
+    decoys.plan(train, "rise", "real", 0)
+    decoys.plan(train, "rise", None, 1)
+    assert calls == [0, 1]

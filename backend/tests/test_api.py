@@ -109,9 +109,6 @@ def test_claude_is_used_automatically_when_a_key_exists(client, monkeypatch):
 
 @pytest.fixture
 def quest_client(tmp_path, monkeypatch):
-    from tests.fixtures import make_quest_world
-    world = make_quest_world(0, n_train=14, n_test=12)
-    monkeypatch.setattr(main, "frames", lambda: world)
     monkeypatch.setattr(main, "QUESTS", tmp_path)
     return TestClient(main.app)
 
@@ -128,24 +125,26 @@ def wait_for_quest(client, quest_id, timeout=120):
 
 
 def test_a_quest_streams_to_the_finale_and_replays(quest_client):
-    body = {"max_heroes": 2, "n_perm": 20, "llm": False}
-    quest_id = quest_client.post("/api/quests", json=body).json()["quest_id"]
+    quest_id = quest_client.post("/api/quests", json={"campaign": "A", "llm": False}).json()["quest_id"]
     events = wait_for_quest(quest_client, quest_id)
-    assert events[-1]["action"] == "finale"
+    assert events[0]["action"] == "quest_start" and events[-1]["action"] == "finale"
     replay = quest_client.post("/api/quests", json={"replay": quest_id}).json()["quest_id"]
     assert [e["line"] for e in wait_for_quest(quest_client, replay)] == [e["line"] for e in events]
     assert quest_id in quest_client.get("/api/quests").json()
-    assert quest_client.get("/api/quests-rules").json()["encounters"]["guardian"]["damage"] > 0
+    rules = quest_client.get("/api/quests-rules").json()
+    assert rules["d_max"]["4"] == 60 and rules["starting_hp"] == 100
+    assert [c["letter"] for c in quest_client.get("/api/campaigns").json()] == ["A", "B", "C", "D"]
 
 
-def test_quest_paths_stay_in_the_quest_folder(quest_client, tmp_path):
+def test_unknown_campaigns_and_paths_are_refused(quest_client, tmp_path):
     (tmp_path.parent / "secret.jsonl").write_text("")
+    assert quest_client.post("/api/quests", json={"campaign": "Z"}).status_code == 404
     assert quest_client.post("/api/quests", json={"replay": "../secret"}).status_code == 404
     assert quest_client.get("/api/quests/..%2Fsecret/events").status_code == 404
 
 
 def test_leaving_stops_a_live_quest(quest_client):
-    body = {"max_heroes": 2, "n_perm": 20, "llm": False, "pace": 0.05}
+    body = {"campaign": "B", "llm": False, "pace": 0.05}
     quest_id = quest_client.post("/api/quests", json=body).json()["quest_id"]
     time.sleep(0.3)
     assert quest_client.post(f"/api/quests/{quest_id}/stop").json() == {"stopped": True}
@@ -153,3 +152,40 @@ def test_leaving_stops_a_live_quest(quest_client):
     assert events[-1]["action"] == "stopped"
     assert not any(e["action"] == "finale" for e in events)
     assert quest_client.post("/api/quests/nope/stop").status_code == 404
+
+
+def test_run_paths_stay_in_the_runs_folder_and_pace_is_bounded(client, tmp_path):
+    (tmp_path.parent / "secret.jsonl").write_text("")
+    assert client.get("/api/runs/..%2Fsecret/events").status_code == 404
+    assert client.post("/api/runs", json={"pace": -1}).status_code == 422
+    assert client.post("/api/runs", json={"pace": 1e9}).status_code == 422
+
+
+def test_the_directors_console_over_http(quest_client):
+    c = quest_client
+    qid = c.post("/api/quests", json={"campaign": "A", "llm": False, "interactive": True}).json()["quest_id"]
+    time.sleep(1.5)
+    out = c.post(f"/api/quests/{qid}/chat", json={"mode": "CHALLENGE", "text": "Could this be luck?", "target": "pioneer",
+                                                  "request_id": "x1"})
+    assert out.status_code == 200, out.text
+    mid = out.json()["mystery"]["id"]
+    fight = c.post(f"/api/quests/{qid}/mystery/{mid}", json={"action": "summon", "request_id": "x2"})
+    assert fight.status_code == 200, fight.text
+    assert fight.json()["mystery"]["status"] in ("survived", "fallen")
+    again = c.post(f"/api/quests/{qid}/mystery/{mid}", json={"action": "summon", "request_id": "x3"})
+    assert again.status_code == 409
+    assert c.post(f"/api/quests/{qid}/bridge", json={"choice": "cross"}).status_code == 409   # not at the bridge yet
+    for lv in (1, 2, 3, 4):
+        c.post(f"/api/quests/{qid}/advance", json={"level": lv})
+    for _ in range(200):
+        if c.get(f"/api/quests/{qid}/director").json()["waiting"] == "bridge":
+            break
+        time.sleep(0.1)
+    assert c.post(f"/api/quests/{qid}/bridge", json={"choice": "inconclusive", "request_id": "b1"}).status_code == 200
+    events = wait_for_quest(c, qid)
+    assert events[-1]["action"] == "finale" and events[-1]["result"]["overworld"]["trial"]["outcome"] == "JUSTIFIED UNCERTAINTY"
+
+
+def test_a_recording_has_no_console(quest_client):
+    qid = quest_client.post("/api/quests", json={"campaign": "A", "llm": False}).json()["quest_id"]
+    assert quest_client.post(f"/api/quests/{qid}/chat", json={"mode": "ASK", "text": "hi"}).status_code == 409

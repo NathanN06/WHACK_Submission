@@ -87,26 +87,33 @@ SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'meal_respo
 
 Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.connect('data/whack.duckdb').sql('FROM meal_responses LIMIT 5'))"`
 
-## Getting started: the Hypothesis Gauntlet
+## Getting started: the Hypothesis Gauntlet (Peptide & GLP-1 Discovery)
 
-The app is a pixel-art dungeon crawl where AI researchers defend hypotheses through four
-levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of
-Truth). Every fight is a real, deterministic statistical test; rules and HP weights are in
-[docs/gauntlet-rules.md](docs/gauntlet-rules.md).
+The Alchemist-Epidemiologist carries three hypothesis scrolls about peptides and GLP-1 drugs through four
+levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of Truth). A
+deterministic Statistical Judge measures every claim; the hero only chooses abilities. Each scroll has its
+own HP and shatters at 0. Only a scroll that predicts unseen, matched patients better than the Gatekeeper
+Skeptic's active-comparator baseline, by a margin unlikely to be luck, wins.
+Rules, formulas and HP weights: [docs/gauntlet-rules.md](docs/gauntlet-rules.md).
+
+**The four campaigns are simulated** worlds with planted, known effects (revealed in the brief). They are
+not real findings and not medical advice.
 
 ```bash
 .venv/bin/uvicorn app.main:app --app-dir backend --port 8000   # then open http://localhost:8000
 ```
 
-- **Begin the quest** runs on `data/whack.duckdb` (build it first, see above). With
-  `ANTHROPIC_API_KEY` in `.env`, Claude plays the Researcher and the Skeptic; otherwise scripted agents do.
-- **Watch a recorded quest** plays `frontend/src/demo-quest.jsonl`, a run on synthetic meals with
-  known truth. It needs no server: `cd frontend/src && python3 -m http.server`, then open `index.html?demo`.
-- Command line: `.venv/bin/python scripts/run_gauntlet.py --synthetic` (or without `--synthetic` for real data).
-- After level IV the champion walks into the Overworld and delivers the final report: winner and why,
-  HP per level, damage by weakness, evidence contributions from real ablations, and a consensus that
-  cites the exact encounters. If nothing validates, the verdict is **Inconclusive**.
-- In the game: Exit quest (stops a live quest), Pause/Resume (Space), 1×/2×/4×, Skip level, Replay, Tutorial, Reduce motion, and a
-  **Ledger view** of every encounter with its raw numbers. `?quest=<id>` reopens a live quest.
+- Pick a campaign (A to D). **Begin** runs it live; with `ANTHROPIC_API_KEY` in `.env` you can let Claude
+  play the Alchemist, otherwise each scroll follows its scripted plan.
+- **Watch the recorded run** plays `frontend/src/demo/demo-<letter>.jsonl` and needs no server:
+  `cd frontend/src && python3 -m http.server`, then open `index.html#watch=A`.
+- Command line: `.venv/bin/python scripts/run_pep.py A` (or `all --out frontend/src/demo` to re-record the demos).
+- Split screen: battle stage (the hero, three floating scrolls, the Gatekeeper and its speech bubbles, a
+  HUD for the scroll under test), combat console (Run/Pause, 1×/2×/4×, Step, Skip level, Exit) and, on the
+  right, the Test Inspector (test, chart, formula, the HP clamp, the telemetry record) above a filterable
+  append-only ledger.
+- After level IV the laboratory shows the Research Decision Brief: decision, evidence with encounter
+  citations, what misled the other scrolls, uncertainty, the composite score with the Gatekeeper's
+  benchmark row, HP per level, damage by trap, and the planted truth.
 
 Tests: `.venv/bin/python -m pytest` and `node --test frontend/tests/*.test.js`.

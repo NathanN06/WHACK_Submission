@@ -1,5 +1,6 @@
-// The Epidemiology Edition game screen: title, playback, battle stage, console, Test Inspector and ledger.
-// Every number drawn comes from a ledger row (epi-state.js folds them); nothing here computes a statistic.
+// The Peptide & GLP-1 edition game screen: title, playback, battle stage, console, Test Inspector and ledger.
+// One hero (the Alchemist) carries three hypothesis scrolls; the Gatekeeper Skeptic speaks at each gate.
+// Every number drawn comes from a ledger row (pep-state.js folds them); nothing here computes a statistic.
 
 const $ = (id) => document.getElementById(id);
 const ROMAN = { 1: "I", 2: "II", 3: "III", 4: "IV" };
@@ -11,7 +12,7 @@ const G = {
   state: initial(), pending: [], done: false,
   running: true, speed: 1, nextAt: 0, hold: false,
   reduced: window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches,
-  f: 0, fx: [], shake: 0, lunge: null, pinned: null, chartMode: "vintage",
+  f: 0, fx: [], shake: 0, lunge: null, pinned: null, bubbleUntil: 0,
   filters: { agent: "", level: "", kind: "", text: "" },
   typer: null,
 };
@@ -40,8 +41,8 @@ async function boot() {
   renderCards();
   $("llm-wrap").hidden = !G.claude;
   $("who").textContent = G.server
-    ? (G.claude ? "Server ready. Claude can play the four agents, or they follow their scripted plans."
-                : "Server ready. The agents follow their scripted plans (add an API key to let Claude play them).")
+    ? (G.claude ? "Server ready. Claude can play the Alchemist, or the hero follows each scroll's scripted plan."
+                : "Server ready. The Alchemist follows each scroll's scripted plan (add an API key to let Claude play).")
     : "No server here: Begin plays the recorded run of the campaign you pick.";
   const hash = new URLSearchParams(location.hash.slice(1));
   if (hash.get("watch")) { G.pick = hash.get("watch").toUpperCase(); startGame("demo"); }
@@ -53,7 +54,7 @@ function renderCards() {
       <span class="card-letter">${c.letter}</span>
       <strong>${esc(c.title)}</strong>
       <span class="card-q">${esc(c.question)}</span>
-      <span class="card-meta">Predicts: ${esc(c.target)} <em>SIMULATED</em></span>
+      <span class="card-meta">${esc(c.drug)} vs ${esc((c.comparator || "").replace(/ \(active comparator\)/, ""))} <em>SIMULATED</em></span>
     </button>`).join("");
   for (const b of document.querySelectorAll(".card")) {
     b.onclick = () => { G.pick = b.dataset.letter; renderCards(); };
@@ -77,7 +78,8 @@ async function startGame(mode) {
   Object.assign(G, { mode, state: initial(), pending: [], done: false, running: true, hold: false, pinned: null,
                      fx: [], questId: null, nextAt: 0 });
   $("screen-title").hidden = true; $("screen-room").hidden = true; $("screen-game").hidden = false;
-  $("ledger").tBodies[0].innerHTML = ""; $("f-agent").innerHTML = '<option value="">All agents</option>';
+  $("ledger").tBodies[0].innerHTML = ""; $("f-agent").innerHTML = '<option value="">Everyone</option>';
+  G.bubbleUntil = 0; $("gate-bubble").hidden = true;
   setRun(true); renderAll();
   ticker("Opening the campaign…", "");
   if (mode === "live" && G.server) {
@@ -157,7 +159,11 @@ function onEvent(e) {
     if (d < 0 && !G.reduced) G.shake = performance.now() + 220;
     G.lunge = { id: e.agent_id, t0: performance.now(), hit: d < 0 };
   }
-  if (e.action === "fall") banner(`${s.agents[e.agent_id]?.name || "An agent"} has fallen`, "0 HP");
+  if (e.action === "shatter") {
+    banner(`${s.agents[e.agent_id]?.name || "A scroll"} shatters`, "0 HP: research integrity gone");
+    if (!G.reduced) G.shake = performance.now() + 380;
+  }
+  if (e.action === "gatekeeper" || e.action === "benchmark") speak(e.result.text, e.action === "benchmark");
   if (e.action === "level_complete") showLevelDone(e.result);
   if (e.action === "finale") finaleReached();
   if (e.action === "stopped" || e.action === "error") ticker(e.line, "");
@@ -178,7 +184,8 @@ function stepOnce() {
   // advance to the next row worth looking at
   while (G.pending.length) {
     const e = G.pending.shift();
-    const big = ["result", "decision", "encounter", "level_start", "level_complete", "finale", "fall"].includes(e.action);
+    const big = ["result", "decision", "encounter", "level_start", "level_complete", "finale", "shatter", "gatekeeper",
+                 "benchmark"].includes(e.action);
     apply(e, !big);
     if (big) break;
   }
@@ -202,9 +209,16 @@ function skipLevel() {
 
 // ---------- the battle stage ----------
 
-const FEET = [[40, 140], [100, 140], [70, 166], [130, 166]];  // feet of the four agents (2x sprites)
-const FRONT = [192, 160];
+const HOME = [[44, 122], [72, 106], [100, 122]];  // where each scroll floats beside the Alchemist (feet, 2x)
+const HERO = [70, 168];
+const FRONT = [170, 138];   // the scroll under test floats out to face the enemy
+const GATE = [298, 166];    // the Gatekeeper watches from the far side
 let STAGE = null;
+
+function scrollAt(s, id) {
+  const i = s.order.indexOf(id), a = s.agents[id];
+  return s.fighter === id && s.enemy && a && a.status === "active" ? FRONT : HOME[i % HOME.length];
+}
 
 function stageLoop() {
   const ctx = $("stage").getContext("2d");
@@ -220,44 +234,67 @@ function stageLoop() {
   requestAnimationFrame(frame);
 }
 
+function aura(ctx, x, y, r, rgb, k) {
+  const g = ctx.createRadialGradient(x, y, 2, x, y, r);
+  g.addColorStop(0, `rgba(${rgb},${k})`); g.addColorStop(1, `rgba(${rgb},0)`);
+  ctx.fillStyle = g; ctx.fillRect(x - r, y - r, r * 2, r * 2);
+}
+
 function drawStage(ctx, now) {
   const s = G.state;
   const level = Math.min(4, Math.max(1, s.level || 1));
+  const f = G.reduced ? 0 : G.f;
   ctx.save();
   ctx.clearRect(0, 0, 320, 180);
   if (G.shake > now) ctx.translate(Math.round(Math.random() * 4 - 2), Math.round(Math.random() * 2 - 1));
   ctx.drawImage(bakeLevel(level), -20, 0);
-  ctx.save(); ctx.translate(-20, 0); drawLevelFx(ctx, level, G.reduced ? 0 : G.f); ctx.restore();
+  ctx.save(); ctx.translate(-20, 0); drawLevelFx(ctx, level, f); ctx.restore();
+  // the Gatekeeper Skeptic, once it has spoken this level
+  if (s.gate) {
+    if (s.benchmark && level === 4) aura(ctx, GATE[0], GATE[1] - 16, 34, "127,224,255", 0.22);
+    const img = pepSprite("Gatekeeper");
+    ctx.save(); ctx.translate(GATE[0], GATE[1]); ctx.scale(2, 2); blit(ctx, img, 0, 0, { flip: true }); ctx.restore();
+  }
   // the enemy
   if (s.enemy && s.enemy.key) {
-    const g = ctx.createRadialGradient(256, 150, 4, 256, 150, 60);  // a pool of light so dark foes read
-    g.addColorStop(0, "rgba(255,230,180,.28)"); g.addColorStop(1, "rgba(255,230,180,0)");
-    ctx.fillStyle = g; ctx.fillRect(190, 80, 132, 100);
+    aura(ctx, 256, 140, 60, "255,230,180", 0.28);  // a pool of light so dark foes read
     const L = G.lunge && now - G.lunge.t0 < 500 ? G.lunge : null;
-    const ex = 256 - (L && L.hit && !G.reduced ? Math.sin((now - L.t0) / 500 * Math.PI) * 30 : 0);
-    ctx.save(); ctx.translate(Math.round(ex), 160);
+    const ex = 252 - (L && L.hit && !G.reduced ? Math.sin((now - L.t0) / 500 * Math.PI) * 30 : 0);
+    ctx.save(); ctx.translate(Math.round(ex), 162);
     ctx.scale(BOSSES[s.enemy.key] ? 1.6 : 3, BOSSES[s.enemy.key] ? 1.6 : 3);
-    drawEnemy(ctx, s.enemy.key, 0, 0, G.reduced ? 0 : G.f, false);
+    drawEnemy(ctx, s.enemy.key, 0, 0, f, false);
     ctx.restore();
   }
-  // the four epidemiologists
+  // the Alchemist
+  const hero = pepSprite("Alchemist");
+  const hb = G.reduced ? 0 : Math.round(Math.sin(G.f / 16) * 0.6);
+  ctx.save(); ctx.translate(HERO[0], HERO[1] + hb); ctx.scale(2, 2); blit(ctx, hero, 0, 0); ctx.restore();
+  // a thread of light from the flask to the scroll under test
+  const fid = s.fighter && s.enemy && s.agents[s.fighter] && s.agents[s.fighter].status === "active" ? s.fighter : null;
+  if (fid) for (let k = 1; k < 12; k++) {
+    if ((k + Math.floor(f / 4)) % 3) continue;
+    const t = k / 12, x = HERO[0] + 26 + (FRONT[0] - HERO[0] - 26) * t, y = HERO[1] - 14 + (FRONT[1] - 12 - HERO[1] + 14) * t;
+    rect(ctx, x, y, 1, 1, "#7fe0ff");
+  }
+  // the three scrolls
   s.order.forEach((id, i) => {
     const a = s.agents[id];
-    const fighting = s.fighter === id && s.enemy && a.status === "active";
-    const [x, fy] = fighting ? FRONT : FEET[i % FEET.length];  // the fighter steps up to face the enemy
-    const img = epiSprite(a.cls);
-    const L = G.lunge && G.lunge.id === id && now - G.lunge.t0 < 400 ? G.lunge : null;
-    const flash = L && L.hit && !G.reduced && (now - L.t0) % 120 < 60;
+    const [x, fy0] = scrollAt(s, id);
     if (a.status !== "active") {
-      ctx.save(); ctx.filter = "grayscale(1) brightness(.7)"; ctx.translate(x, fy); ctx.scale(2, 2); ctx.rotate(-Math.PI / 2);
-      ctx.drawImage(img, 0, -img.height / 2); ctx.restore();
+      ctx.save(); ctx.translate(x, fy0 + 4); ctx.scale(2, 2); drawAsh(ctx, 0, 0); ctx.restore();
       return;
     }
-    const bob = G.reduced ? 0 : Math.round(Math.sin(G.f / 14 + i) * 0.6);
-    ctx.save(); ctx.translate(x, fy + bob); ctx.scale(2, 2);
-    blit(ctx, flash ? flashOf(`epi:${a.cls}`, img) : img, 0, 0);
+    const fy = fy0 + (G.reduced ? 0 : Math.round(Math.sin(G.f / 12 + i * 2) * 1.5));
+    const img = scrollSprite(a.archetype);
+    const fighting = id === fid;
+    if (fighting) aura(ctx, x, fy - 12, 26, "255,224,138", 0.5 + (G.reduced ? 0 : 0.15 * Math.sin(G.f / 6)));
+    else if (s.active === id) aura(ctx, x, fy - 12, 18, "255,224,138", 0.28);
+    const L = G.lunge && G.lunge.id === id && now - G.lunge.t0 < 400 ? G.lunge : null;
+    const flash = L && L.hit && !G.reduced && (now - L.t0) % 120 < 60;
+    ctx.save(); ctx.translate(x, fy); ctx.scale(2, 2);
+    blit(ctx, flash ? flashOf(`scroll:${a.archetype}`, img) : img, 0, 0);
     ctx.restore();
-    // floating HP bar, credits pips and buff dots
+    // floating HP bar, credit pips and buff dots
     const top = fy - img.height * 2 - 6;
     rect(ctx, x - 13, top, 26, 4, "#0d0b1e");
     const w = Math.round(24 * Math.max(0, a.hp) / 100);
@@ -265,24 +302,33 @@ function drawStage(ctx, now) {
     pixelText(ctx, String(a.hp), x, top - 7, "#f3e9d2");
     const c = Math.round(a.credits / 20);
     for (let k = 0; k < c; k++) rect(ctx, x - 12 + k * 4, top + 5, 3, 2, "#e8b847");
-    a.buffs.slice(0, 7).forEach((_, k) => rect(ctx, x + 15, top + 2 + k * 4, 3, 3, "#7fe0ff"));
+    a.buffs.slice(0, 6).forEach((_, k) => rect(ctx, x + 11, top + 9 + k * 4, 3, 3, "#7fe0ff"));
   });
   // floating damage numbers
   G.fx = G.fx.filter((p) => now - p.t0 < 1100);
   for (const p of G.fx) {
-    const i = s.order.indexOf(p.id);
-    if (i < 0) continue;
-    const [fx, fy] = s.fighter === p.id ? FRONT : FEET[i % FEET.length];
+    if (!s.agents[p.id]) continue;
+    const [fx, fy] = scrollAt(s, p.id);
     const rise = G.reduced ? 0 : (now - p.t0) / 1100 * 14;
-    pixelText(ctx, p.text, fx + 22, fy - 50 - rise, p.color);
+    pixelText(ctx, p.text, fx + 18, fy - 34 - rise, p.color);
   }
   ctx.restore();
+}
+
+// The Gatekeeper's speech bubble over the stage.
+function speak(text, benchmark) {
+  const b = $("gate-bubble");
+  b.innerHTML = `<small>${benchmark ? "The Gatekeeper sets the benchmark" : "Warden of the Null, the Gatekeeper Skeptic"}</small>${esc(text)}`;
+  b.hidden = false;
+  G.bubbleUntil = performance.now() + 3200 / G.speed;
+  clearTimeout(b._t);
+  b._t = setTimeout(() => { b.hidden = true; renderEnemy(); }, 3200 / G.speed);
 }
 
 // ---------- HTML around the stage ----------
 
 function renderAll() {
-  renderNodes(); renderParty(); renderEnemy();
+  renderNodes(); renderParty(); renderEnemy(); renderHud();
   $("ledger-count").textContent = `${G.state.events.length} rows`;
 }
 
@@ -293,24 +339,31 @@ function renderNodes() {
 }
 
 const portraitCache = {};
-function portrait(cls) {
-  if (portraitCache[cls]) return portraitCache[cls];
-  const img = epiSprite(cls), c = document.createElement("canvas");
+function portrait(key) {  // "hero", "gatekeeper", or a scroll archetype
+  if (portraitCache[key]) return portraitCache[key];
+  const img = key === "hero" ? pepSprite("Alchemist") : key === "gatekeeper" ? pepSprite("Gatekeeper") : scrollSprite(key);
+  const k = img.width > 8 ? 2.5 : 3.4, c = document.createElement("canvas");
   c.width = 48; c.height = 48;
   const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, (48 - img.width * 2.5) / 2, 48 - img.height * 2.5, img.width * 2.5, img.height * 2.5);
-  return (portraitCache[cls] = c.toDataURL());
+  ctx.drawImage(img, (48 - img.width * k) / 2, img.width > 8 ? 48 - img.height * k : (48 - img.height * k) / 2, img.width * k, img.height * k);
+  return (portraitCache[key] = c.toDataURL());
 }
 
 function renderParty() {
   const s = G.state;
-  $("party").innerHTML = s.order.map((id) => {
+  const standing = s.order.filter((id) => s.agents[id].status === "active").length;
+  const hero = s.hero ? `<li class="pcard hero-card">
+      <img src="${portrait("hero")}" alt="" width="48" height="48">
+      <div class="pinfo"><strong>${esc(s.hero.short || s.hero.name)}</strong> <small>the hero</small>
+        <div class="meta"><span>${standing} of ${s.order.length} scrolls intact</span></div>
+        <div class="buffs"><span>chooses abilities, never numbers</span></div></div></li>` : "";
+  $("party").innerHTML = hero + s.order.map((id) => {
     const a = s.agents[id];
-    const st = a.status !== "active" ? "fallen" : (s.fighter === id ? "fighting" : "");
+    const st = a.status !== "active" ? "fallen" : (s.fighter === id && s.enemy ? "fighting" : "");
     const cast = a.abilities[s.level] || [];
-    return `<li class="pcard ${st} a-${a.archetype}">
-      <img src="${portrait(a.cls)}" alt="" width="48" height="48">
-      <div class="pinfo"><strong>${esc(a.name)}</strong> <small>${esc(a.title)}</small>
+    return `<li class="pcard ${st} a-${a.archetype}" title="${esc(a.claim)}">
+      <img src="${portrait(a.archetype)}" alt="" width="48" height="48">
+      <div class="pinfo"><strong>${esc(a.name.replace(/^The /, ""))}</strong> <small>${esc(a.title)}</small>
         <div class="hp"><i style="width:${Math.max(0, a.hp)}%"></i><span>${a.hp} HP</span></div>
         <div class="meta"><span title="Research credits left">◆ ${a.credits}</span>
           ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}
@@ -320,11 +373,23 @@ function renderParty() {
   }).join("");
 }
 
+// Top-left HUD: the scroll the Alchemist is holding up right now.
+function renderHud() {
+  const s = G.state, a = s.agents[s.fighter && s.enemy ? s.fighter : s.active];
+  const hud = $("hud");
+  if (!a) { hud.hidden = true; return; }
+  hud.hidden = false;
+  hud.className = `hud a-${a.archetype} ${a.status !== "active" ? "fallen" : ""}`;
+  hud.innerHTML = `<img src="${portrait(a.archetype)}" alt="" width="30" height="30"><div><strong>${esc(a.name)}</strong>
+    <div class="hp"><i style="width:${Math.max(0, a.hp)}%"></i><span>${a.hp} HP</span></div>
+    <small>◆ ${a.credits} · ${a.design === "new_user" || a.buffs.includes("TIME-ZERO ALIGNED") ? "time-zero aligned" : "as carried"}</small></div>`;
+}
+
 function abilityName(k) { return (G.state.rules && G.state.rules.abilities[k] && G.state.rules.abilities[k].name) || k; }
 
 function renderEnemy() {
   const e = G.state.enemy, plate = $("enemy-plate");
-  if (!e || !e.key) { plate.hidden = true; return; }
+  if (!e || !e.key || performance.now() < G.bubbleUntil) { plate.hidden = true; return; }
   plate.hidden = false;
   plate.innerHTML = `<strong>${esc(e.name)}</strong>${e.boss ? ' <em>BOSS</em>' : ""}<small>${esc(e.test || "")}</small>`;
 }
@@ -372,26 +437,19 @@ function inspect(e) {
       ${r.na ? '<span class="tag">not applicable</span>' : ""}</div>
       <dl class="insp">
         <dt>Test</dt><dd>${esc(en.test || "")}</dd>
-        <dt>Ability</dt><dd>${esc(tele.agentAction && tele.agentAction !== "NONE" ? abilityName(tele.agentAction) : "none used")}</dd>
+        <dt>Ability</dt><dd>${esc(tele.heroAction && tele.heroAction !== "NONE" ? abilityName(tele.heroAction) : "none used")}</dd>
         <dt>Formula</dt><dd><code>${esc(r.formula || "")}</code></dd>
         <dt>Result</dt><dd>${esc(e.line || "")}</dd>
         <dt>In plain English</dt><dd>${esc(e.explain || "")}</dd>
       </dl>`;
-    if (r.chart) {
-      if (r.chart.kind === "vintage") {
-        html += `<div class="toggle" role="group" aria-label="Which archive">
-          <button class="btn small" data-mode="vintage" aria-pressed="${G.chartMode === "vintage"}">Vintage: as it stood on the day</button>
-          <button class="btn small" data-mode="hindsight" aria-pressed="${G.chartMode === "hindsight"}">Hindsight: finalized archive</button></div>`;
-      }
-      html += chartHTML(r.chart, { mode: r.chart.kind === "vintage" ? G.chartMode : null });
-    }
+    if (r.chart) html += chartHTML(r.chart);
     const nums = Object.entries(r.numbers || {});
     if (nums.length) html += `<table class="nums">${nums.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${fmt(v)}</td></tr>`).join("")}</table>`;
     if (tele.encounterId) {
       html += `<div class="clamp"><span>ΔHP = −round(clamp(D<sub>raw</sub> × M, 0, D<sub>max</sub>))</span>
         <span>= −round(clamp(${fmt(cr.rawDamage)} × ${fmt(cr.abilityMultiplier)}, 0, ${dmax}))${r.heal ? ` + ${r.heal} heal` : ""}</span>
         <strong class="${cr.clampedHpDelta < 0 ? "neg" : cr.clampedHpDelta > 0 ? "pos" : ""}">= ${cr.clampedHpDelta > 0 ? "+" : ""}${cr.clampedHpDelta} HP</strong></div>
-        <details><summary>Telemetry record (EpiEncounterTelemetry)</summary><pre>${esc(JSON.stringify(tele, null, 2))}</pre></details>`;
+        <details><summary>Telemetry record (PepEncounterTelemetry)</summary><pre>${esc(JSON.stringify(tele, null, 2))}</pre></details>`;
     }
   } else {
     html += `<div class="insp-head"><strong>${esc(e.action.replace(/_/g, " "))}</strong>${a ? ` · ${esc(a.name)}` : ""}</div>
@@ -399,13 +457,10 @@ function inspect(e) {
     if (e.action === "decision") {
       const picks = (e.result && e.result.abilities) || [];
       html += `<p>Cast: ${picks.length ? picks.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join(" ") : "nothing"}
-        ${e.cost ? ` for ${e.cost} credits` : ""}. Chosen by ${esc((e.result && e.result.source) === "claude" ? "Claude, in character" : "the archetype's scripted plan")}.</p>`;
+        ${e.cost ? ` for ${e.cost} credits` : ""}. Chosen by ${esc((e.result && e.result.source) === "claude" ? "Claude, as the Alchemist" : "the scroll's scripted plan")}.</p>`;
     }
   }
   $("insp-body").innerHTML = html;
-  for (const b of $("insp-body").querySelectorAll("[data-mode]")) {
-    b.onclick = () => { G.chartMode = b.dataset.mode; inspect(e); };
-  }
   const un = $("unpin");
   if (un) un.onclick = () => { G.pinned = null; const last = [...s.events].reverse().find((x) => x.action === "result"); if (last) inspect(last); };
 }
@@ -414,7 +469,8 @@ function inspect(e) {
 
 function whoOf(e) {
   const a = e.agent_id && G.state.agents[e.agent_id];
-  return a ? a.name : e.actor === "judge" ? "Judge" : "System";
+  if (e.action === "gatekeeper" || e.action === "benchmark") return "Gatekeeper";
+  return a ? a.name.replace(/^The /, "") : e.actor === "judge" ? "Judge" : "System";
 }
 
 function rowHTML(e) {
@@ -434,8 +490,8 @@ function rebuildLedger() {
 
 function fillAgentFilter() {
   const sel = $("f-agent"), cur = sel.value;
-  sel.innerHTML = '<option value="">All agents</option>' + G.state.order.map((id) =>
-    `<option value="${id}">${esc(G.state.agents[id].name)}</option>`).join("");
+  sel.innerHTML = '<option value="">Everyone</option>' + G.state.order.map((id) =>
+    `<option value="${id}">${esc(G.state.agents[id].name)}</option>`).join("") + '<option value="gatekeeper">The Gatekeeper</option>';
   sel.value = cur;
 }
 
@@ -449,8 +505,8 @@ function showLevelDone(r) {
     <td>${x.abilities.map((k) => esc(abilityName(k))).join(", ") || "—"}</td>
     <td>${x.falsified.map(esc).join(", ") || "—"}</td><td class="neg">${x.sprung.map(esc).join(", ") || "—"}</td></tr>`).join("");
   const md = r.most_damaging;
-  dlg.innerHTML = `<h2>Level ${ROMAN[r.level]} cleared</h2><p class="sub">${esc(r.name)} · ${r.standing} of ${s.order.length} still standing</p>
-    <table><thead><tr><th>Agent</th><th>HP</th><th>Credits</th><th>Abilities cast</th><th>Traps falsified</th><th>Traps sprung</th></tr></thead>
+  dlg.innerHTML = `<h2>Level ${ROMAN[r.level]} cleared</h2><p class="sub">${esc(r.name)} · ${r.standing} of ${s.order.length} scrolls intact</p>
+    <table><thead><tr><th>Scroll</th><th>HP</th><th>Credits</th><th>Abilities cast</th><th>Traps falsified</th><th>Traps sprung</th></tr></thead>
     <tbody>${rows}</tbody></table>
     ${md ? `<p class="most">Most damaging enemy: <strong>${esc(md.name)}</strong> (${esc(md.trap)}), ${md.hp_dealt} HP dealt.</p>` : ""}
     <div class="dlg-buttons"><button class="btn gold" id="ld-go">Continue <span id="ld-count"></span></button></div>`;
@@ -474,22 +530,23 @@ function closeLevelDone() {
 }
 
 function finaleReached() {
-  banner("The Citadel opens", "To the Situation Room");
+  banner("The Citadel opens", "To the Research Brief");
   setTimeout(() => { if (G.state.finale && !$("screen-game").hidden) showRoom(); }, 2200 / G.speed);
 }
 
 // ---------- tutorial and how it works ----------
 
 const TUTORIAL = [
-  ["The battle stage", "Four AI epidemiologists (left) face the evidence's traps (right). Floating bars are research integrity (HP); gold pips are research credits; blue dots are active buffs."],
+  ["The battle stage", "One hero, the Alchemist-Epidemiologist, carries three hypothesis scrolls into four dungeons. Each scroll has its own research integrity (HP, the bar above it), credits (gold pips) and buffs (blue dots). A scroll at 0 HP shatters into ash; the hero walks on."],
+  ["The Gatekeeper", "The Warden of the Null speaks at every gate and sets the benchmark in the Citadel: the matched active comparator with no drug effect. It is not a scroll. A scroll is validated only if it predicts unseen patients better than that benchmark."],
   ["The combat console", "Every ruling is typed out here. Run or pause, change the speed, Step one ruling at a time, or skip the rest of a level."],
-  ["The Test Inspector", "Each fight shows the test the Statistical Judge ran, the data it used, the formula with its numbers, and the clamp that turns it into HP. The Chronolock's chart can switch between data as it stood on the day and the finalized archive."],
-  ["The evidence ledger", "Every row is append-only and filterable. The agents only choose abilities: every number comes from the Judge. Click any row to inspect it."],
+  ["The Test Inspector", "Each fight shows the test the Statistical Judge ran, the data behind it, the formula with its numbers, and the clamp that turns it into HP."],
+  ["The evidence ledger", "Every row is append-only and filterable. The hero only chooses abilities: every number comes from the Judge. Click any row to inspect it."],
 ];
 
 function maybeTutorial(force = false) {
   let seen = false;
-  try { seen = localStorage.getItem("epi-tutorial") === "1"; } catch { /* private mode */ }
+  try { seen = localStorage.getItem("pep-tutorial") === "1"; } catch { /* private mode */ }
   if (seen && !force) return;
   let i = 0;
   const dlg = $("tutorial"), was = G.running;
@@ -501,7 +558,7 @@ function maybeTutorial(force = false) {
     $("tut-next").onclick = () => { if (++i < TUTORIAL.length) show(); else done(); };
     $("tut-skip").onclick = done;
   };
-  const done = () => { try { localStorage.setItem("epi-tutorial", "1"); } catch { /* ignore */ } dlg.close(); setRun(was || !force); };
+  const done = () => { try { localStorage.setItem("pep-tutorial", "1"); } catch { /* ignore */ } dlg.close(); setRun(was || !force); };
   show();
   dlg.showModal();
 }
@@ -516,19 +573,22 @@ async function showHow() {
   const levels = rules ? Object.entries(rules.levels).map(([l, v]) => `<tr><td>${ROMAN[l]}</td><td>${esc(v.name)}</td><td>${esc(v.trap)}</td><td><code>${esc(v.rule)}</code></td><td>${rules.d_max[l]}</td></tr>`).join("") : "";
   const abil = rules ? Object.values(rules.abilities).map((a) => `<tr><td>${esc(a.name)}</td><td>${ROMAN[a.level]}</td><td>${a.cost}</td><td>${esc(a.effect)}</td></tr>`).join("") : "";
   dlg.innerHTML = `<h2>How it works</h2>
-    <p>Each campaign is a <strong>simulated</strong> surveillance world with planted, known effects: five regions, 900 days of
-    hospital admissions, and outside signals (wastewater, searches, sales, satellites) that may or may not lead them.
-    The truth is revealed at the end so you can see whether the Judge got it right.</p>
-    <p>Four AI epidemiologists each back a hypothesis. They start with 100 HP (research integrity) and 100 credits,
-    and each level they choose abilities to cast. They never produce a number: the deterministic Statistical Judge
-    measures everything and applies fixed rules, <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>.</p>
-    <p>The final boss, the Guardian of False Discoveries, compares each agent's real-time forecast with the
-    Surveillance Skeptic's AR(4) baseline on the days surges began. An agent is <strong>validated</strong> only if it
-    beats the baseline (SS &gt; 0) and a Diebold-Mariano test says the gain is unlikely to be luck (p &lt; 0.05).
-    If nobody does, the verdict is <strong>Baseline Holds</strong>.</p>
+    <p>Each campaign is a <strong>simulated</strong> world with planted, known effects: an EHR cohort across five sites,
+    a social-media corpus, a literature base and a trial registry for each claim. Nothing in it is a real finding or
+    medical advice. The truth is revealed at the end so you can see whether the Judge got it right.</p>
+    <p>One hero, the Alchemist-Epidemiologist, carries three hypothesis scrolls: a Hype Scroll found on social media,
+    a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study. Each scroll starts with
+    100 HP (research integrity) and 100 credits, and the hero buys abilities for it each level. The hero never
+    produces a number: the deterministic Statistical Judge measures everything and applies fixed rules,
+    <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>. A scroll at 0 HP shatters.</p>
+    <p>The final boss, the Guardian of False Discoveries, matches unseen holdout patients on the propensity score and
+    compares each scroll's predictions with the Gatekeeper's benchmark: the active comparator with no drug effect.
+    A scroll is <strong>validated</strong> only if it lowers the prediction loss (SS<sub>oos</sub> &gt; 0.002) and a
+    paired loss test says the gain is unlikely to be luck (p &lt; 0.05). If none is, the verdict is
+    <strong>Baseline Holds</strong>.</p>
     ${levels ? `<h3>Levels</h3><table><thead><tr><th></th><th>Level</th><th>Trap</th><th>Damage rule</th><th>D<sub>max</sub></th></tr></thead><tbody>${levels}</tbody></table>` : ""}
     ${abil ? `<h3>Abilities</h3><table><thead><tr><th>Ability</th><th>Level</th><th>Cost</th><th>Effect</th></tr></thead><tbody>${abil}</tbody></table>` : ""}
-    <h3>Composite score</h3><p>0.35 × surge skill + 0.25 × HP + 0.25 × traps falsified + 0.15 × efficiency (lift per credit).</p>
+    <h3>Composite score</h3><p>0.35 × out-of-sample skill + 0.25 × HP + 0.25 × traps falsified + 0.15 × efficiency (lift per credit).</p>
     <div class="dlg-buttons"><button class="btn gold" id="how-close">Close</button></div>`;
   dlg.showModal();
   $("how-close").onclick = () => dlg.close();

@@ -17,11 +17,11 @@ from .arena.agents import RosterLanista, default_roster, llm_available, make_age
 from .arena.features import default_registry, public_catalog
 from .arena.ledger import Ledger, load
 from .arena.orchestrator import Arena
-from .epi import rules as epi_rules
-from .epi.agents import make_epidemiologist
-from .epi.campaign import EpiQuest
-from .epi.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS
-from .epi.models import QuestEvent
+from .pep import rules as pep_rules
+from .pep.agents import make_hero
+from .pep.campaign import PepQuest
+from .pep.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS, HERO
+from .pep.models import QuestEvent
 
 ROOT = Path(__file__).resolve().parents[2]
 RUNS = ROOT / "data" / "runs"
@@ -152,12 +152,12 @@ def test_theory(req: TheoryRequest):
             "events": [e.model_dump() for e in arena.ledger.events]}
 
 
-# ---------- Hypothesis Gauntlet: Epidemiology Edition ----------
+# ---------- Hypothesis Gauntlet: Peptide & GLP-1 Edition ----------
 
 
 class QuestRequest(BaseModel):
     campaign: str = Field("A", max_length=40)  # A-D or a campaign id
-    llm: bool | None = None  # None = Claude plays the four agents if an API key is set
+    llm: bool | None = None  # None = Claude plays the Alchemist if an API key is set
     replay: str | None = None
     pace: float = Field(0.0, ge=0, le=5)
     seed: int = 0
@@ -189,7 +189,7 @@ def start_quest(req: QuestRequest):
     else:
         cid = _campaign_id(req.campaign)
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
-        quest = EpiQuest(quest_id, cid, ledger, make_epidemiologist(_use_llm(req.llm)), seed=req.seed, pace=req.pace)
+        quest = PepQuest(quest_id, cid, ledger, make_hero(_use_llm(req.llm)), seed=req.seed, pace=req.pace)
         thread = threading.Thread(target=quest.run, daemon=True)
     thread.start()
     _quests[quest_id] = {"ledger": ledger, "thread": thread, "quest": quest}
@@ -229,18 +229,20 @@ def quest_events(quest_id: str, after: int = 0):
 
 @app.get("/api/campaigns")
 def campaigns():
-    """The four epidemiological protocols the title screen offers."""
-    return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "target": c.target,
+    """The four peptide campaigns the title screen offers."""
+    return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
+             "comparator": c.comparator, "target": c.outcomes[0].label, "scrolls": [s.title for s in c.scrolls],
              "simulated": True} for c in CAMPAIGNS.values()]
 
 
 @app.get("/api/quests-rules")
 def quest_rulebook():
     """Every HP, credit, damage and score rule, so the screen can show the rulebook it is judged by."""
-    return {"levels": epi_rules.LEVELS, "abilities": epi_rules.ABILITIES, "enemies": epi_rules.ENEMIES,
-            "d_max": epi_rules.D_MAX, "score_weights": epi_rules.SCORE_WEIGHTS, "score_rules": epi_rules.SCORE_RULES,
-            "verdicts": epi_rules.VERDICTS, "archetypes": ARCHETYPES,
-            "starting_hp": epi_rules.STARTING_HP, "starting_credits": epi_rules.STARTING_CREDITS}
+    R = pep_rules
+    return {"levels": R.LEVELS, "abilities": R.ABILITIES, "enemies": R.ENEMIES, "d_max": R.D_MAX,
+            "score_weights": R.SCORE_WEIGHTS, "score_rules": R.SCORE_RULES, "verdicts": R.VERDICTS,
+            "traps": R.TRAPS, "trap_labels": R.TRAP_LABELS, "archetypes": ARCHETYPES, "hero": HERO,
+            "starting_hp": R.STARTING_HP, "starting_credits": R.STARTING_CREDITS}
 
 
 app.mount("/", StaticFiles(directory=ROOT / "frontend" / "src", html=True), name="ui")

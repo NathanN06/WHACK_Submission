@@ -3,27 +3,28 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>Hypothesis Gauntlet: Epidemiology Edition</title>
+  <title>Hypothesis Gauntlet: Peptide & GLP-1</title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Jersey+10&family=Pixelify+Sans:wght@400;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="epi.css">
+  <link rel="stylesheet" href="pep.css">
 </head>
 <body>
-  <!-- Title: the Epidemiological Protocol Selector -->
+  <!-- Title: the campaign selector -->
   <section class="screen title" id="screen-title">
     <canvas class="pixel full" id="title-canvas" width="320" height="180" aria-hidden="true"></canvas>
     <div class="title-copy">
       <h1>Hypothesis<br>Gauntlet</h1>
-      <p class="edition">Computational Epidemiology Edition</p>
-      <p class="tag">Four AI epidemiologists race to predict hospital surges from outside signals. A deterministic
-        Statistical Judge measures every claim and applies fixed damage rules. Only a signal that beats the hospital-only
-        baseline on data you would really have had walks out of the Citadel.</p>
+      <p class="edition">Peptide &amp; GLP-1 Discovery</p>
+      <p class="tag">The Alchemist-Epidemiologist carries three hypothesis scrolls about peptides and GLP-1 drugs
+        through four dungeons of hype, rat studies, p-hacking and immortal time. A deterministic Statistical Judge measures
+        every claim and applies fixed damage rules. Only a scroll that predicts unseen patients better than the
+        Gatekeeper's active-comparator baseline walks out of the Citadel.</p>
     </div>
     <div class="selector frame">
-      <h2>Epidemiological Protocol Selector</h2>
+      <h2>Choose a campaign</h2>
       <div class="cards" id="cards" role="radiogroup" aria-label="Campaign"></div>
       <div class="menu-row">
-        <label class="llm-toggle" id="llm-wrap" hidden><input type="checkbox" id="llm"> Claude plays the four agents</label>
+        <label class="llm-toggle" id="llm-wrap" hidden><input type="checkbox" id="llm"> Claude plays the Alchemist</label>
         <div class="menu-buttons">
           <button class="btn gold" id="begin">Begin the campaign</button>
           <button class="btn" id="demo">Watch the recorded run</button>
@@ -40,20 +41,22 @@
       <div class="left">
         <nav class="nodes frame" aria-label="Progress">
           <ol id="nodes"></ol>
-          <span class="sim-badge" title="A synthetic surveillance world with planted, known effects. Not real public health findings.">SIMULATED</span>
+          <span class="sim-badge" title="A synthetic world with planted, known effects. Not real findings and not medical advice.">SIMULATED</span>
         </nav>
 
         <div class="stage frame">
           <canvas class="pixel" id="stage" width="320" height="180" aria-label="The battle stage"></canvas>
+          <div class="hud" id="hud" hidden></div>
           <div class="enemy-plate" id="enemy-plate" hidden></div>
+          <div class="gate-bubble" id="gate-bubble" role="status" hidden></div>
           <div class="banner" id="banner" hidden></div>
         </div>
 
-        <ol class="party" id="party" aria-label="The four epidemiologists"></ol>
+        <ol class="party" id="party" aria-label="The Alchemist and the three scrolls"></ol>
 
         <section class="console frame" aria-label="Combat console">
           <div class="ticker" aria-live="polite">
-            <p class="tick-line" id="tick-line">The four epidemiologists gather at the gate.</p>
+            <p class="tick-line" id="tick-line">The Alchemist gathers three scrolls at the gate.</p>
             <p class="tick-explain" id="tick-explain"></p>
           </div>
           <div class="controls" role="group" aria-label="Playback">
@@ -79,11 +82,11 @@
         <section class="ledger frame" aria-label="Evidence ledger">
           <header><h2>Evidence Ledger</h2><small id="ledger-count"></small></header>
           <div class="filters">
-            <select id="f-agent" aria-label="Filter by agent"><option value="">All agents</option></select>
+            <select id="f-agent" aria-label="Filter by scroll"><option value="">Everyone</option></select>
             <select id="f-level" aria-label="Filter by level"><option value="">All levels</option>
               <option value="1">I</option><option value="2">II</option><option value="3">III</option><option value="4">IV</option></select>
             <select id="f-kind" aria-label="Filter by kind"><option value="">Everything</option>
-              <option value="judge">Judge rulings</option><option value="agent">Agent choices</option><option value="hp">HP changes</option></select>
+              <option value="judge">Judge rulings</option><option value="agent">Hero choices</option><option value="hp">HP changes</option></select>
             <input id="f-text" type="search" placeholder="Search" aria-label="Search the ledger">
           </div>
           <div class="table-wrap"><table id="ledger"><thead><tr><th>#</th><th>Lv</th><th>Who</th><th>What happened</th><th>HP</th></tr></thead><tbody></tbody></table></div>
@@ -92,10 +95,10 @@
     </div>
   </section>
 
-  <!-- Endgame: the Overworld Situation Room and the Decision Brief -->
+  <!-- Endgame: the Alchemist's laboratory and the Research Decision Brief -->
   <section class="screen room" id="screen-room" hidden>
     <div class="room-scene">
-      <canvas class="pixel" id="room-canvas" width="320" height="180" aria-label="The Public Health Situation Room"></canvas>
+      <canvas class="pixel" id="room-canvas" width="320" height="180" aria-label="The Alchemist's laboratory"></canvas>
       <div class="room-headline" id="room-headline"></div>
     </div>
     <article class="brief" id="brief"></article>
@@ -105,11 +108,11 @@
   <dialog id="how-dlg" class="frame"></dialog>
   <dialog id="tutorial" class="frame"></dialog>
 
-  <script src="epi-state.js"></script>
+  <script src="pep-state.js"></script>
   <script src="sprites.js"></script>
   <script src="worlds.js"></script>
-  <script src="epi-charts.js"></script>
-  <script src="epi.js"></script>
-  <script src="epi-brief.js"></script>
+  <script src="pep-charts.js"></script>
+  <script src="pep.js"></script>
+  <script src="pep-brief.js"></script>
 </body>
 </html>

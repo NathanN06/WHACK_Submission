@@ -1,8 +1,8 @@
-"""Run one Epidemiology Edition campaign from the command line and print its ledger.
+"""Run one Peptide & GLP-1 campaign from the command line and print its ledger.
 
-    .venv/bin/python scripts/run_epi.py A                       # scripted agents
-    .venv/bin/python scripts/run_epi.py all --out frontend/src/demo   # record the four demo campaigns
-    .venv/bin/python scripts/run_epi.py B --llm                 # Claude plays the four agents (needs a key)
+    .venv/bin/python scripts/run_pep.py A                       # scripted agents
+    .venv/bin/python scripts/run_pep.py all --out frontend/src/demo   # record the four demo campaigns
+    .venv/bin/python scripts/run_pep.py B --llm                 # Claude plays the Alchemist (needs a key)
 """
 
 import argparse
@@ -14,10 +14,10 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
 
 from app.arena.ledger import Ledger  # noqa: E402
-from app.epi.agents import make_epidemiologist  # noqa: E402
-from app.epi.campaign import EpiQuest  # noqa: E402
-from app.epi.campaigns import BY_LETTER, CAMPAIGNS  # noqa: E402
-from app.epi.models import QuestEvent  # noqa: E402
+from app.pep.agents import make_hero  # noqa: E402
+from app.pep.campaign import PepQuest  # noqa: E402
+from app.pep.campaigns import BY_LETTER, CAMPAIGNS  # noqa: E402
+from app.pep.models import QuestEvent  # noqa: E402
 
 
 def show(e: QuestEvent) -> None:
@@ -39,13 +39,13 @@ def main() -> None:
         BY_LETTER[args.campaign.upper()].id if args.campaign.upper() in BY_LETTER else args.campaign]
     for cid in ids:
         c = CAMPAIGNS[cid]
-        run_id = f"epi-{c.letter}-s{args.seed}-{'llm' if args.llm else 'script'}"
+        run_id = f"pep-{c.letter}-s{args.seed}-{'llm' if args.llm else 'script'}"
         ledger = Ledger(run_id, ROOT / "data" / "quests", on_write=None if args.quiet else show, model=QuestEvent)
-        result = EpiQuest(run_id, cid, ledger, make_epidemiologist(args.llm), seed=args.seed).run()
+        result = PepQuest(run_id, cid, ledger, make_hero(args.llm), seed=args.seed).run()
         print(f"\n[{c.letter}] {result['headline'] if result else 'no result'}")
         if result:
             for r in result["ranking"]:
-                print(f"   {r['name']:6} {r['verdict']:10} hp={r['hp']:3} score={r['score']['total']:6.1f} "
+                print(f"   {r['name']:28} {r['verdict']:10} hp={r['hp']:3} score={r['score']['total']:6.1f} "
                       f"traps {r['traps_falsified']}/{r['traps_faced']} spent={r['spent']}")
         if args.out:
             out = ROOT / args.out

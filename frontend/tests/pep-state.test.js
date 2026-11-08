@@ -3,7 +3,7 @@ const test = require("node:test");
 const assert = require("node:assert");
 const fs = require("node:fs");
 const path = require("node:path");
-const { replay, initial, reduce, nodeStates, filterEvents, beat, findEncounter } = require("../src/epi-state.js");
+const { replay, initial, reduce, nodeStates, filterEvents, beat, findEncounter } = require("../src/pep-state.js");
 
 const load = (L) => fs.readFileSync(path.join(__dirname, `../src/demo/demo-${L}.jsonl`), "utf8")
   .split("\n").filter(Boolean).map((l) => JSON.parse(l));
@@ -15,21 +15,23 @@ for (const L of ["A", "B", "C", "D"]) {
     const fin = events[events.length - 1];
     assert.strictEqual(fin.action, "finale");
     assert.strictEqual(s.finale, fin.result);
-    assert.strictEqual(s.order.length, 4);
+    assert.strictEqual(s.order.length, 3);
+    assert.ok(s.hero && s.gatekeeper);
+    assert.ok(s.events.some((e) => e.action === "gatekeeper"));
     for (const r of fin.result.ranking) {
       assert.strictEqual(s.agents[r.id].hp, r.hp, `${r.name} HP`);
       assert.strictEqual(s.agents[r.id].verdict, r.verdict);
       assert.strictEqual(100 - s.agents[r.id].credits, r.spent, `${r.name} credits`);
     }
     assert.strictEqual(s.encounters, fin.result.totals.encounters);
-    assert.strictEqual(s.fallen, fin.result.totals.fallen);
+    assert.strictEqual(s.shattered, fin.result.totals.shattered);
     assert.ok(nodeStates(s).every((n) => n.done));
     assert.ok(s.simulated);
   });
 }
 
-test("campaign C ends with the baseline holding; A crowns a validated champion", () => {
-  assert.strictEqual(replay(load("C")).finale.baseline_holds, true);
+test("B, C and D end with the baseline holding; A crowns a validated champion", () => {
+  for (const L of ["B", "C", "D"]) assert.strictEqual(replay(load(L)).finale.baseline_holds, true);
   const a = replay(load("A")).finale;
   assert.strictEqual(a.champion.verdict, "VALIDATED");
 });
@@ -56,6 +58,17 @@ test("ledger filters", () => {
   assert.ok(judge.length && judge.every((e) => e.action === "result"));
   assert.ok(filterEvents(events, { agent: "pioneer", level: 4 }).every((e) => e.agent_id === "pioneer" && e.level === 4));
   assert.ok(filterEvents(events, { kind: "hp" }).every((e) => e.hp_delta));
-  assert.ok(filterEvents(events, { text: "E062" }).length >= 1);
+  assert.ok(filterEvents(events, { text: "E030" }).length >= 1);
+  assert.ok(filterEvents(events, { agent: "gatekeeper" }).every((e) => ["gatekeeper", "benchmark"].includes(e.action)));
   assert.ok(beat(events[0]) > 0);
+});
+
+test("a shattered scroll stays shattered and the active scroll moves on", () => {
+  const events = load("A");
+  const at = events.findIndex((e) => e.action === "shatter");
+  const s = events.slice(0, at + 1).reduce(reduce, initial());
+  const gone = s.agents[events[at].agent_id];
+  assert.strictEqual(gone.status, "shattered");
+  assert.strictEqual(gone.hp, 0);
+  assert.notStrictEqual(s.active, gone.id);
 });

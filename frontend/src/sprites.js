@@ -138,6 +138,17 @@ const ENEMY_ART = {
     "........", ".....DDD", "....DSSS", "....DSLS", "....DSEE", "....DSSS", "..DDDDDD", ".DSSSSSS",
     ".DSLSSRS", ".DSSSSRS", ".DSS.SSS", "..DD.SSS", ".....SSD", "....DSSD", "....DSS.", "....DDD."]),
     pal: { D: "#2a2838", S: "#6a6880", L: "#9a98b0", E: "#7fe0ff", R: "#7fe0ff" } },
+  siren: { map: mirror([
+    "........", ".....HHH", "....HHHH", "...HHSSS", "...HSESS", "...HSSSS", "...HHSMS", "..HH.SSS",
+    "..H..TTT", "..H.STTT", "....STCT", ".....FFF", "......FF", ".....FFF", "....FF.F", "...FF..."]),
+    pal: { H: "#ff6bd0", S: "#f1c9a5", E: "#15122b", M: "#c0294a", T: "#e8b847", C: "#fff3a0", F: "#3fbfa0" } },
+  rat: { map: [
+    "................", "................", "................", "................", "................",
+    "................", "................", "..........EE....", ".........EPPE...", "....GGGGGGGGGG..",
+    "..GGGGGGGGGGKGG.", ".GGLLLLGGGGGGGGN", ".GGLLLLLGGGGGG..", "T.GGGGGGGGGGG...", "TT.D.W....D.D...",
+    ".TTTT.W.........",
+  ], pal: { G: "#d8d4e4", L: "#f3f0f8", E: "#b8b4c8", P: "#ff9aa8", K: "#ff4a5a", N: "#ff9aa8", T: "#ff9aa8",
+            D: "#6a6880", W: "#f3e9d2" } },
   wraith: { map: mirror([
     "........", ".....DDD", "....DCCC", "...DCCLL", "...DCDDD", "...DCDEE", "...DCDDD", "..DCCCDD",
     "..DCCCCC", ".HDCCLCC", ".H.DCCCC", "...DCCLC", "...DCCCC", "..DCC.CC", "..D...DC", "........"]),
@@ -179,31 +190,17 @@ function flashOf(key, img) {
 function heroSprite(cls, skin) { return bake(`hero:${cls}:${skin}`, heroMap(cls), heroPalette(cls, skin)); }
 function enemySprite(kind) { const a = ENEMY_ART[kind]; return a ? bake(`enemy:${kind}`, a.map, a.pal) : null; }
 
-// ---------- the four AI epidemiologists (Epidemiology Edition), full 16-wide maps facing right ----------
+// ---------- Peptide & GLP-1 edition: the Alchemist, the Gatekeeper and the scrolls ----------
 
-const EPI_ART = {
-  Nowcaster: { map: [  // neon visor, hoodie, a buzzing phone on an antenna
-    "....M.M.M.......", "...MMMMMMMM.....", "..MMMMMMMMMM....", "..MMSSSSSSMM....", "..MVVVVVVVVM....",
-    "...SSSSSSSS.....", "...SSSSKSSS.....", "....SSSSSS..A...", "...HHHHHHHH.A...", "..HHHHHHHHHHPP..",
-    "..HSHHKKHHHSPG..", "..H.HHKKHHH.PP..", "...HHHHHHHH.....", "...HHHHHHHH.....", "...JJJ..JJJ.....",
-    "...JJ....JJ.....", "..BBB....BBB....",
-  ], pal: { M: "#ff4ad8", V: "#7fe0ff", S: "#f1c9a5", K: "#2a1a2a", H: "#5a2a8a", A: "#9a96a8", P: "#15122b",
-             G: "#7fffd0", J: "#2b3f8a", B: "#1a1020" } },
-  Pioneer: { map: [  // lab coat, goggles pushed up, a glowing flask
-    "................", "....HHHHHH......", "...HHHHHHHH.....", "...HGGHHGGH.....", "...SSSSSSSS.....",
-    "...SESSSESS.....", "...SSSSSSSS.....", "....SSMMSS......", "...CCCTTCCC.....", "..CCCCTTCCCC.N..",
-    "..CSCCTTCCCS.N..", "..C.CCTTCC..LLL.", "....CCTTCC.LLWLL", "....CCCCCC..LLL.", "....DD..DD......",
-    "....DD..DD......", "...BBB..BBB.....",
-  ], pal: { H: "#3a2a1a", G: "#7fe0ff", S: "#a8714a", E: "#1a1020", M: "#6a3a2a", C: "#f3f0e8", T: "#1f8a8a",
-             N: "#c8e0ff", L: "#5fd67a", W: "#d8ffd0", D: "#2a3a4a", B: "#1a1020" } },
-  Opportunist: { map: [  // messenger cap, scarf, a freshly printed preprint
-    "................", "....KKKKKK......", "...KKKKKKKKK....", "...SSSSSSS......", "...SESSSES......",
-    "...SSSSSSS......", "....SSWSS.......", "...RRRRRRRR.....", "..OOOOOOOOOO.PP.", "..OSOOOOOOOSPPP.",
-    "..OOOOOOOOOOPLP.", "...OOOOOOOO.PLP.", "...OOOOOOOO.PPP.", "....JJ..JJ......", "....JJ..JJ......",
-    "...BBB..BBB.....",
-  ], pal: { K: "#c0294a", S: "#e8b48a", E: "#1a1020", W: "#ffffff", R: "#ffe066", O: "#d8742a", P: "#f3e9d2",
-             L: "#8a8070", J: "#4a3a2a", B: "#1a1020" } },
-  Skeptic: { map: [  // grey hood, round spectacles, a shield with a flat baseline on it
+const PEP_ART = {
+  Alchemist: { map: [  // the Alchemist-Epidemiologist: starred hat, goggles, stethoscope, a glowing flask
+    "......HH........", ".....HHHH.......", "....HHTHHH......", "...HHHHHHHH.....", "..HHHHHHHHHH....",
+    "...SSSSSSS......", "...SGGSGGS......", "...SSSSSSS......", "....SSMSS.......", "...RRRRRRRR..F..",
+    "..RRRCRRRRRR.F..", "..RSRCRRRRSRFFF.", "..R.RCCCRRR.FLF.", "...RRRRRRRR.FFF.", "...RRRRRRRR.....",
+    "...RR....RR.....", "..BBB....BBB....",
+  ], pal: { H: "#4a2c7a", T: "#e8b847", S: "#d9a066", G: "#7fe0ff", M: "#7a4a2e", R: "#2b6f78", C: "#c0c8d8",
+             F: "#c8e0ff", L: "#5fd67a", B: "#1a1020" } },
+  Gatekeeper: { map: [  // the Warden of the Null: grey hood, round spectacles, a shield bearing a flat baseline
     "................", "....HHHHHH......", "...HHHHHHHH.....", "..HHHHHHHHHH....", "..HHSSSSSSHH....",
     "..HSGGSSGGSH....", "..HSSSSSSSSH....", "..HHSSMMSSHH....", "..HHHHHHHHHHDDDD", "..HHHHHHHHHHDIID",
     "..HSHHHHHHHSDLLD", "..HHHHHHHHHHDIID", "...HHHHHHHH.DIID", "...HHHHHHHH..DD.", "....BB..BB......",
@@ -212,9 +209,28 @@ const EPI_ART = {
              B: "#2a2838" } },
 };
 
-function epiSprite(cls) {
-  const a = EPI_ART[cls];
-  return a ? bake(`epi:${cls}`, a.map.map((r) => r.padEnd(16, ".")), a.pal) : heroSprite("Wanderer", 0);
+// A rolled hypothesis scroll; the wax seal is the scroll's colour.
+const SCROLL_MAP = [
+  "DDDDDDDD", "DRRRRRRD", ".PPPPPP.", ".PLLLLP.", ".PPPPPP.", ".PLLLPP.", ".PPPPPP.", ".PLLLLP.",
+  ".PPPSSP.", ".PPPSSP.", "DRRRRRRD", "DDDDDDDD",
+];
+const SCROLL_SEAL = { HYPE: "#ff4ad8", PIONEER: "#1fbfbf", PREPRINT: "#ff8a3a" };
+
+function pepSprite(cls) {
+  const a = PEP_ART[cls];
+  return a ? bake(`pep:${cls}`, a.map.map((r) => r.padEnd(16, ".")), a.pal) : heroSprite("Wanderer", 0);
+}
+
+function scrollSprite(archetype) {
+  return bake(`scroll:${archetype}`, SCROLL_MAP, { D: "#2a1a10", R: "#8a5a2b", P: "#f3e9d2", L: "#9a8a70",
+                                                  S: SCROLL_SEAL[archetype] || "#e8b847" });
+}
+
+// What is left of a shattered scroll: a little heap of ash with a charred roller. Feet at (x, y).
+function drawAsh(ctx, x, y) {
+  ellipse(ctx, x, y - 2, 7, 2, "#3a3848"); ellipse(ctx, x, y - 3, 5, 2, "#6a6880");
+  rect(ctx, x - 4, y - 5, 8, 2, "#2a1a10");
+  for (const [dx, dy] of [[-3, -6], [2, -7], [4, -5], [-5, -4]]) rect(ctx, x + dx, y + dy, 1, 1, "#9a96a8");
 }
 
 // Draw a sprite with its feet at (x, y). opts: flip, flash, alpha.
@@ -397,7 +413,7 @@ function drawEnemy(ctx, kind, x, y, f, head, opts = {}) {
     return h;
   }
   const img = enemySprite(kind);
-  const bob = kind === "bat" || kind === "wisp" || kind === "phantom" || kind === "wraith"
+  const bob = kind === "bat" || kind === "wisp" || kind === "phantom" || kind === "wraith" || kind === "siren"
     ? Math.round(Math.sin(f / 8) * 2) - 4 : (kind === "slime" ? 0 : 0);
   const squash = kind === "slime" && f % 30 < 15;
   if (opts.flash) blit(ctx, flashOf(`enemy:${kind}`, img), x, y + bob, opts);
@@ -407,4 +423,4 @@ function drawEnemy(ctx, kind, x, y, f, head, opts = {}) {
   return 16;
 }
 
-if (typeof module !== "undefined") module.exports = { mirror, HEADS, BODY, ENEMY_ART, CLASSES, EPI_ART };
+if (typeof module !== "undefined") module.exports = { mirror, HEADS, BODY, ENEMY_ART, CLASSES, PEP_ART, SCROLL_MAP };

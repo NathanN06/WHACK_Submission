@@ -26,6 +26,6 @@ class QuestEvent(BaseModel):
     credits: int | None = None
     status: str | None = None
     verdict: str | None = None
-    encounter: dict[str, Any] | None = None   # EpiEncounterTelemetry (spec section 9)
+    encounter: dict[str, Any] | None = None   # PepEncounterTelemetry
     line: str | None = None                   # what happened, with the numbers
     explain: str | None = None                # the same, in plain English

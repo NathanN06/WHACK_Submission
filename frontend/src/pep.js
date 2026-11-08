@@ -9,7 +9,7 @@ const FALLBACK_CAMPAIGNS = ["A", "B", "C", "D"];
 
 const G = {
   campaigns: [], pick: "A", server: false, claude: false,
-  counts: {},   // campaign letter -> how many hypotheses the Scribe forms ("" = the three hand-written scrolls)
+  counts: {},   // campaign letter -> how many hypotheses the Scribe forms (2 to 6)
   champions: null,   // Challenger Mode: each campaign's title track and its reigning champion (GET /api/champions)
   mode: null, questId: null, poll: null, token: 0,
   state: initial(), pending: [], done: false,
@@ -97,7 +97,9 @@ function titleLoop() {
 }
 
 function syncCount() {   // the hypothesis picker shows the number chosen for the selected campaign
-  if ($("count")) $("count").value = G.counts[G.pick] || "";
+  // the Scribe always forms the scrolls (2 to 6, default 3); the hand-written set is no longer offered
+  if (!(G.pick in G.counts)) G.counts[G.pick] = "3";
+  if ($("count")) $("count").value = G.counts[G.pick];
 }
 
 // Challenger Mode: the selected campaign's title track, its reigning champion and its record (all from the registry)
@@ -870,11 +872,11 @@ async function showHow() {
     <p>Each campaign is a <strong>simulated</strong> world with planted, known effects: an EHR cohort across five sites,
     a social-media corpus, a literature base and a trial registry for each claim. Nothing in it is a real finding or
     medical advice. The truth is revealed at the end so you can see whether the Judge got it right.</p>
-    <p>One hero, the Alchemist-Epidemiologist, carries hypothesis scrolls: by default a Hype Scroll found on social
-    media, a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study. Pick a number from 2
-    to 6 and the Scribe forms that many instead, no two with the same outcome and archetype, each with real papers
-    and trial counts copied from Europe PMC and ClinicalTrials.gov. Each scroll starts with 100 HP (research
-    integrity) and 100 credits, and the hero buys abilities for it each level. The hero never produces a number:
+    <p>One hero, the Alchemist-Epidemiologist, carries 2 to 6 hypothesis scrolls formed by the Scribe, no two with the
+    same outcome and archetype, each with real papers and trial counts copied from Europe PMC and ClinicalTrials.gov.
+    With an API key, Claude writes their words; without one, the campaign's own scrolls come first: a Hype Scroll
+    found on social media, a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study.
+    Each scroll starts with 100 HP (research integrity) and 100 credits, and the hero buys abilities for it each level. The hero never produces a number:
     the deterministic Statistical Judge measures everything and applies fixed rules,
     <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>. A scroll at 0 HP shatters.</p>
     <p>Levels I to III see only the training years, and every patient's follow-up is cut at the training cutoff, so

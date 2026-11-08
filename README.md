@@ -89,8 +89,8 @@ Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.
 
 ## Getting started: the Hypothesis Gauntlet (Peptide & GLP-1 Discovery)
 
-The Alchemist-Epidemiologist carries hypothesis scrolls (three hand-written, or 2 to 6 formed by the Scribe)
-about peptides and GLP-1 drugs through four
+The Alchemist-Epidemiologist carries hypothesis scrolls (2 to 6 formed by the Scribe on the title screen; the
+recorded demos and the command line use three hand-written ones) about peptides and GLP-1 drugs through four
 levels of evidence (Rumour Dungeon, Forgotten Archives, Temple of Replication, Citadel of Truth). A
 deterministic Statistical Judge measures every claim; the hero only chooses abilities. Each scroll has its
 own HP and shatters at 0. Only a scroll that predicts unseen, matched patients better than the Gatekeeper

@@ -94,3 +94,22 @@ def test_a_quest_with_formed_hypotheses_runs_to_the_end(tmp_path):
     acts = [r["action"] for r in rows]
     assert "error" not in acts and acts.index("hypotheses") < acts.index("recruit")
     assert acts.count("recruit") == 5 and len(q.agents) == 5
+
+
+def test_each_quest_asks_the_scribe_for_something_new(tmp_path):
+    H._RECENT.clear()
+    db = fake_db(tmp_path / "v.duckdb")
+    seen = []
+    good = {"title": "BPC-157 speeds tendon healing", "claim": "BPC-157 cuts persistent pain versus physiotherapy.",
+            "outcome": "pain", "topic": "bpc157", "archetype": "PIONEER", "origin": "cytoprotection reviews"}
+
+    def complete(system, user):
+        seen.append((system, json.loads(user)))
+        return json.dumps({"hypotheses": [good]})
+
+    for _ in range(2):
+        H.form(BY_LETTER["B"], 1, complete, db_path=db)
+    (sys1, u1), (sys2, u2) = seen
+    assert u1["already_written"] == [] and u2["already_written"] == ["BPC-157 speeds tendon healing"]
+    assert "angles" in sys1 and len(u1["topics"]["bpc157"]["examples"]) == 6   # a sample of the 7 known-species papers
+    H._RECENT.clear()

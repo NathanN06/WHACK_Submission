@@ -1,7 +1,8 @@
 # Hypothesis Gauntlet: Peptide & GLP-1 Discovery, the rules
 
 One hero, **the Alchemist-Epidemiologist**, carries **hypothesis scrolls** about peptides and GLP-1 drugs
-(the three hand-written ones, or 2 to 6 formed by the Scribe) through four levels of evidence. Every enemy is one deterministic measurement by the
+(2 to 6 formed by the Scribe on the title screen; the recorded demos and the command line use three hand-written
+ones) through four levels of evidence. Every enemy is one deterministic measurement by the
 **Statistical Judge**; every HP change is one rule below applied to that measurement. The numbers live
 in `backend/app/pep/rules.py` and `backend/app/pep/judge.py`. Nothing here is decided by an LLM.
 
@@ -45,7 +46,8 @@ The hero only chooses abilities for each scroll. Scripted plans by default; with
 that scroll's credits (anything invalid falls back to the script).
 
 **The Scribe** (`hypotheses.py`) forms 2 to 6 scrolls when a quest asks for `scrolls: N`. It writes words only
-(title, claim, origin, outcome, topic, archetype), never a number. No two scrolls share a structure (outcome and
+(title, claim, origin, outcome, topic, archetype), never a number. With an API key, Claude writes them, shown a fresh
+sample of the real papers, a few random angles and the titles it wrote lately, so quests do not repeat. No two scrolls share a structure (outcome and
 archetype); Claude's duplicates and claims containing numbers are rejected and the script fills the slots, in the
 order Mechanistic, Pilot (preprint), Viral (hype), each across the outcomes. Titles name the outcome: "The Pilot
 Re-Injury Scroll".

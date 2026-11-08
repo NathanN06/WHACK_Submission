@@ -13,10 +13,12 @@ scrolls that share both would be tested identically: a structural duplicate. The
 from __future__ import annotations
 
 import dataclasses
+import random
 import re
+from collections import deque
 from pathlib import Path
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from .world import Campaign, Literature, Scroll
 
@@ -40,6 +42,15 @@ DEFAULT_TOPIC = {"A": {}, "B": {}, "C": {"frailty": "gh_secretagogue", "epiage":
 # Drug names that legitimately contain digits; anything else with a digit counts as a number.
 _NAMES = re.compile(r"GLP-?1|BPC[- ]?157|TB-?500|CJC-?1295|GHK-Cu|SGLT-?2|DPP-?4|beta-?4|type 2|type II", re.I)
 SPECIES = {"human": "human", "mixed": "human", "animal": "rodent", "in_vitro": "in vitro"}   # unknown is left out
+
+# Variety: each call shows the Scribe a fresh random sample of the real papers, a few random angles to explore,
+# and the titles it already wrote for this campaign, so a new quest does not repeat the last one.
+N_EXAMPLES = 6
+ANGLES = ["a specific patient subgroup (age, sex, comorbidity, baseline severity)", "the biological mechanism",
+          "how quickly the effect appears or how long it lasts", "dose or adherence", "a surprising or contrarian twist",
+          "what one particular paper in the sample suggests", "what patients say online", "a safety or trade-off framing",
+          "an indirect route (weight loss, mood, appetite, sleep)", "the comparison against the comparator drug"]
+_RECENT: dict[str, deque] = {}   # campaign letter -> titles the Scribe wrote lately (this server process)
 
 
 # ---------------------------------------------------------------- the real evidence
@@ -94,12 +105,21 @@ def _tally(items) -> dict:
 # ---------------------------------------------------------------- what the Scribe writes
 
 class _Hypothesis(BaseModel):
-    title: str = Field(min_length=3, max_length=60)
+    title: str = Field(min_length=3, max_length=80)
     claim: str = Field(min_length=10, max_length=320)
     outcome: str
     topic: str
     archetype: str
     origin: str = Field(min_length=3, max_length=260)
+
+    @field_validator("title", "claim", "origin", mode="before")
+    @classmethod
+    def _trim(cls, v, info):
+        """A wordy field is cut at a word boundary rather than throwing away the whole batch."""
+        limit = {"title": 80, "claim": 320, "origin": 260}[info.field_name]
+        if isinstance(v, str) and len(v) > limit:
+            v = v[:limit].rsplit(" ", 1)[0].rstrip(" ,;:-")
+        return v
 
 
 class _Hypotheses(BaseModel):
@@ -115,7 +135,9 @@ For each hypothesis choose:
   archetype: how the claim was found. HYPE = a crowd claim found on social media by searching many outcomes and
              subgroups; PIONEER = a careful, mechanistic, clinically framed claim; PREPRINT = an optimistic claim from
              a small study or animal work. Use a mix of archetypes, and let the evidence suggest which fits.
-  title:     a plain-English headline of the hypothesis itself, at most eight words, e.g.
+Be inventive: explore these angles this time: {angles}. Spread the hypotheses across different outcomes and topics.
+Do not repeat or lightly reword any title in "already_written"; every hypothesis must be new.
+  title:     a plain-English headline of the hypothesis itself, at most eight words and under sixty characters, e.g.
              "Semaglutide cuts alcohol relapse" or "BPC-157 speeds tendon healing" (no fantasy names)
   claim:     one sentence (under forty words) stating what the drug does to that outcome versus the comparator
   origin:    where such a claim comes from, grounded in the evidence summary (under twenty-five words)
@@ -134,14 +156,22 @@ def _valid(h: _Hypothesis, c: Campaign) -> bool:
             and not any(_has_number(t) for t in (h.title, h.claim, h.origin)))
 
 
-def _summary(c: Campaign, ev: dict | None) -> dict:
-    """What the Scribe reads: the counts copied from the database, no statistics."""
+def _summary(c: Campaign, ev: dict | None, rng: random.Random | None = None) -> dict:
+    """What the Scribe reads: the counts copied from the database (no statistics) and a random sample of papers."""
+    rng = rng or random.Random()
+    recent = list(_RECENT.get(c.letter, ()))
     if not ev:
-        return {"note": "No real evidence database was found; write hypotheses from the campaign question."}
-    return {"topics": {k: {key: v[key] for key in ("label", "papers_found", "species", "unknown_species", "designs",
-                                                   "trials", "completed_rcts", "examples")}
-                       for k, v in ev["topics"].items()},
-            "faers_adverse_event_reports": ev["faers"]}
+        return {"note": "No real evidence database was found; write hypotheses from the campaign question.",
+                "already_written": recent}
+    topics = {}
+    for k, v in ev["topics"].items():
+        t = {key: v[key] for key in ("label", "papers_found", "species", "unknown_species", "designs",
+                                     "trials", "completed_rcts")}
+        recs = v["records"]
+        t["examples"] = ([f"{r['title']} ({r['year']}, {r['design']}, {r['species']})"
+                          for r in rng.sample(recs, min(N_EXAMPLES, len(recs)))] if recs else v["examples"])
+        topics[k] = t
+    return {"topics": topics, "faers_adverse_event_reports": ev["faers"], "already_written": recent}
 
 
 def signature(h) -> tuple[str, str]:
@@ -201,13 +231,16 @@ def _default_topic(c: Campaign, outcome: str, i: int, claim: str = "") -> str:
     return DEFAULT_TOPIC.get(c.letter, {}).get(outcome) or (topics[i % len(topics)] if topics else "")
 
 
-def ask_claude(complete, c: Campaign, n: int, ev: dict | None, exclude=()) -> list[_Hypothesis] | None:
+def ask_claude(complete, c: Campaign, n: int, ev: dict | None, exclude=(),
+               rng: random.Random | None = None) -> list[_Hypothesis] | None:
     from ..arena.agents import ask
+    rng = rng or random.Random()
     avoid = (" These outcome and archetype pairs are already taken, so avoid them too: "
              + "; ".join(f"{o} + {a}" for o, a in sorted(exclude)) + ".") if exclude else ""
     system = SYSTEM.format(n=n, question=c.question, drug=c.drug, comparator=c.comparator, population=c.population,
-                           outcomes={o.key: o.label for o in c.outcomes}, topics=TOPICS.get(c.letter, {}), avoid=avoid)
-    reply = ask(complete, system, _summary(c, ev), _Hypotheses)
+                           outcomes={o.key: o.label for o in c.outcomes}, topics=TOPICS.get(c.letter, {}), avoid=avoid,
+                           angles="; ".join(rng.sample(ANGLES, 3)))
+    reply = ask(complete, system, _summary(c, ev, rng), _Hypotheses)
     return reply.hypotheses if reply else None
 
 
@@ -233,6 +266,7 @@ def form(c: Campaign, n: int, complete=None, db_path: Path = DB_PATH, exclude=()
             seen.add(signature(h))
         if hyps:
             source = "claude"
+            _RECENT.setdefault(c.letter, deque(maxlen=18)).extend(h.title for h in hyps)
     # Any slot Claude left empty takes the script's scroll for that position, or its next unused structure.
     pool = scripted(c, len(c.outcomes) * len(ARCHETYPE_ORDER), exclude, prefer)
     for i in range(len(hyps), n):

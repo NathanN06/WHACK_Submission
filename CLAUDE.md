@@ -5,10 +5,9 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 ## Layout
 - `backend/` — API and research/statistics engine
 - `frontend/` — web UI
+- `docs/` — notes and pitch material
 - `scripts/download_data.py` — downloads datasets into `data/` (gitignored; never commit data)
 - `scripts/build_db.py` — loads the CSVs into `data/whack.duckdb` (run with `.venv/bin/python`)
-
-- `scripts/build_level3_db.py` creates the separate `data/level3_health.sqlite3` with raw readings and daily star facts; it never overwrites an existing file.
 
 ## Data conventions
 - `participant_id` = a person (`CGM-001`, `BUT-101`); `session_id` = one measurement period. Train/holdout splits must be by `participant_id`.

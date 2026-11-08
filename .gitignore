@@ -3,9 +3,6 @@
 .env.*
 !.env.example
 
-# Data exports
-*.csv
-
 # Python
 __pycache__/
 *.py[cod]

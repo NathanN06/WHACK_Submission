@@ -9,6 +9,7 @@ Finding patterns in data is easy; knowing which ones to trust is hard. This proj
 ```
 backend/    API + research/statistics engine
 frontend/   Web UI
+docs/       Notes, design, pitch material
 scripts/    Utility scripts (e.g. dataset download)
 data/       Downloaded datasets (gitignored, not committed)
 ```
@@ -85,27 +86,6 @@ SELECT column_name, comment FROM duckdb_columns() WHERE table_name = 'meal_respo
 ```
 
 Quick look from the terminal: `.venv/bin/python -c "import duckdb; print(duckdb.connect('data/whack.duckdb').sql('FROM meal_responses LIMIT 5'))"`
-
-### Separate level-three health database
-
-Run `python scripts/build_level3_db.py` to create a new, separate
-`data/level3_health.sqlite3` from all CGMacros participant CSVs. The builder uses
-only Python's standard library and the streaming code in `scripts/download_data.py`.
-It does not download the photo archive or save intermediate CSVs.
-
-The database has `dim_participant` and `dim_date` dimensions, plus two fact tables:
-`fact_health_reading` stores every original timestamp; `fact_daily_health` stores
-one row per participant/date with sensor means, recorded totals and reading counts.
-`dataset_metadata` records data level 3, source and build time.
-
-The full data has 45 participants, 687,580 timestamped rows and 533 person-day
-summaries. Missing readings remain NULL. Raw CGM values retain the source's
-interpolation; recorded daily totals can cover partial days. Split training and
-holdout data by participant ID.
-
-The builder refuses existing output files and cannot target `data/whack.duckdb`.
-Use `--output data/level3_health_run2.sqlite3` for another build, or
-`--source-csv path/to/readings.csv` to reuse an existing timestamp-level CSV.
 
 ## Getting started
 

@@ -95,38 +95,100 @@ function drawLab(ctx, f, s) {
   }
   // the other scrolls: still rolled up if they survived, a heap of ash if they shattered
   rows.filter((r) => !champ || r.id !== champ.id).forEach((r, i) => {
-    const a = s.agents[r.id], x = [100, 220, 76, 244][i % 4], y = 162;
+    const a = s.agents[r.id], x = [100, 220, 76, 244, 52, 268][i % 6], y = 162;
     if (r.status !== "active") { ctx.save(); ctx.translate(x, y); ctx.scale(2, 2); drawAsh(ctx, 0, 0); ctx.restore(); }
     else { ctx.save(); ctx.translate(x, y - 4 + Math.round(Math.sin(f / 12 + i))); ctx.scale(2, 2); blit(ctx, scrollSprite(a.archetype), 0, 0); ctx.restore(); }
   });
+}
+
+const STATUS_TONE = { SUPPORTED: "ok", REFUTED: "bad", INCONCLUSIVE: "warn", "NOT ASSESSED": "none" };
+
+function statusBadge(st) {
+  return `<span class="sci-badge t-${STATUS_TONE[st] || "none"}">${esc(st || "NOT ASSESSED")}</span>`;
+}
+
+function rrText(e) {
+  if (!e || e.rr == null) return "—";
+  return `${fmt(e.rr, 2)} <small>(95% CI ${fmt(e.lo, 2)} to ${fmt(e.hi, 2)})</small>`;
 }
 
 function renderBrief(f) {
   const b = f.brief, s = G.state;
   const cite = (id) => (id ? `<button class="cite" data-cite="${esc(id)}" title="Open this encounter in the Test Inspector">${esc(id)}</button>` : "");
   const evid = (list) => list.map((x) => `<li>${esc(x.text)} ${cite(x.cite)}</li>`).join("");
-  const scoreRows = f.ranking.map((r, i) => `<tr class="${r.id === (f.champion && f.champion.id) ? "champ" : ""} ${r.status !== "active" ? "fallen" : ""}">
-    <td>${i + 1}</td><td><strong>${esc(r.name)}</strong><small>${esc(r.title || r.archetype)} · ${esc(r.outcome || "")}</small></td>
+  const tracks = f.tracks || [];
+  const trackOf = Object.fromEntries(tracks.map((t) => [t.outcome, t]));
+  // the composite score, grouped by research question: a champion is crowned per track, never across them
+  let lastTrack = null, n = 0;
+  const scoreRows = f.ranking.map((r) => {
+    let head = "";
+    if (tracks.length && r.track !== lastTrack) {
+      lastTrack = r.track; n = 0;
+      const t = trackOf[r.track] || {};
+      head = `<tr class="track-row"><td colspan="13"><b>${t.primary ? "Primary question" : "Question"}:</b> ${esc(t.label || r.outcome || r.track)}
+        ${statusBadge(t.science && t.science.status)} ${t.champion_name ? `· champion <strong>${esc(t.champion_name)}</strong>` : "· no champion"}</td></tr>`;
+    }
+    n += 1;
+    return head + `<tr class="${r.champion_of ? "champ" : ""} ${r.status !== "active" ? "fallen" : ""}">
+    <td>${n}</td><td><strong>${esc(r.name)}</strong><small>${esc(r.title || r.archetype)} · ${esc(r.outcome || "")}</small></td>
     <td><span class="verdict v-${r.verdict.replace(/\s/g, "")}">${esc(r.verdict)}</span></td>
     <td>${r.skill && r.skill.ss_oos != null ? (r.skill.ss_oos >= 0 ? "+" : "") + r.skill.ss_oos.toFixed(4) : "—"}</td><td>${r.skill ? fmt(r.skill.p_dm, 3) : "—"}</td>
     <td>${r.hp}</td><td>${r.traps_falsified}/${r.traps_faced}</td><td>${r.spent}</td>
     <td>${fmt(r.score.skill, 1)}</td><td>${fmt(r.score.hp, 1)}</td><td>${fmt(r.score.traps, 1)}</td><td>${fmt(r.score.efficiency, 1)}</td>
-    <td><strong>${fmt(r.score.total, 1)}</strong></td></tr>`).join("")
+    <td><strong>${fmt(r.score.total, 1)}</strong></td></tr>`;
+  }).join("")
     + (f.benchmark ? `<tr class="bench"><td></td><td><strong>${esc(f.benchmark.name)}</strong><small>${esc(f.benchmark.title)} · ${esc(f.benchmark.claim)}</small></td>
       <td><span class="verdict v-BASELINE">BASELINE</span></td><td colspan="10" class="muted">the bar itself: SS<sub>oos</sub> = 0 by definition</td></tr>` : "");
   const maxDmg = Math.max(1, ...f.damage.map((d) => d.hp_lost));
   const dmg = f.damage.map((d) => `<li><span>${esc(d.trap)}</span><i style="width:${(d.hp_lost / maxDmg * 100).toFixed(0)}%"></i><b>${d.hp_lost} HP · ${Math.round(d.share * 100)}%</b></li>`).join("");
   const champ = f.champion;
+  const primary = tracks.find((t) => t.primary) || tracks[0];
+  const science = tracks.length ? `<section><h3>Is the effect real? The scientific status of each question</h3>
+      <p class="small muted">Prediction and causation are judged separately. The verdicts above ask whether a scroll predicts unseen
+      patients better than the Gatekeeper's benchmark; this asks whether the drug changes the risk at all, on the same
+      matched holdout patients. ${f.science_rules ? `Smallest effect of interest: risk ratio ${fmt(f.science_rules.sesoi_rr)}; 95% intervals; detectable effect at ${Math.round(f.science_rules.power * 100)}% power.` : ""}</p>
+      <div class="table-wrap"><table class="score tracks"><thead><tr><th>Question (outcome)</th><th>Status</th><th>Risk ratio, matched holdout</th>
+        <th>Events (drug / comparator)</th><th title="The smallest risk ratio these patients could detect with 80% power">Detectable</th><th>Champion</th><th></th></tr></thead>
+      <tbody>${tracks.map((t) => `<tr class="${t.primary ? "primary" : ""}"><td><strong>${esc(t.label)}</strong>${t.primary ? "<small>primary question</small>" : ""}</td>
+        <td>${statusBadge(t.science.status)}${t.science.below_sesoi ? '<small>smaller than the effect of interest</small>' : ""}</td>
+        <td>${rrText(t.effect)}${t.effect && t.effect.method ? `<small>${esc(t.effect.method)}</small>` : ""}</td>
+        <td>${t.effect ? `${t.effect.events_treated} / ${t.effect.events_comparator} <small>of ${t.effect.n_treated} / ${t.effect.n_comparator}</small>` : "—"}</td>
+        <td>${t.science.mde_rr != null ? fmt(t.science.mde_rr, 2) : "—"}</td>
+        <td>${t.champion_name ? esc(t.champion_name) : '<span class="muted">none</span>'}</td><td>${cite(t.cite)}</td></tr>
+        <tr class="why"><td colspan="7">${esc(t.science.why || "")}</td></tr>`).join("")}</tbody></table></div></section>` : "";
+  const ch = f.challenger;
+  const challenger = ch ? `<section class="challenger-card r-${esc((ch.result || "").split(" ")[0])}"><small>Challenger round ${ch.round} · ${esc(ch.track)} · fresh cohort, seed ${ch.seed}</small>
+      <h3>${esc(ch.result)}${ch.winner_name ? `: ${esc(ch.winner_name)}` : ""}</h3><p>${esc(ch.why)}</p>
+      ${ch.champion ? `<p class="muted small">Champion ${esc(ch.champion.hid)}: won round ${ch.champion.won_round}${ch.champion.defended ? `, defended ${ch.champion.defended}×` : ""}${ch.champion.not_defended ? `, not defended ${ch.champion.not_defended}×` : ""}. Its claim is frozen (SHA-256 ${esc((ch.champion.claim_hash || "").slice(0, 16))}…).</p>` : ""}
+      ${ch.applied === false ? `<p class="muted small">Not written to the registry${ch.would_have_been ? ` (it would have been ${esc(ch.would_have_been)})` : ""}.</p>` : ""}
+      <div class="table-wrap"><table class="score"><thead><tr><th>Scroll</th><th>Eligible</th><th>Why</th><th>Verdict</th><th>Status</th><th>SS<sub>oos</sub></th></tr></thead>
+      <tbody>${(ch.entries || []).map((x) => `<tr class="${x.id === ch.winner ? "champ" : ""}"><td><strong>${esc(x.name)}</strong>${x.incumbent ? "<small>the incumbent</small>" : ""}</td>
+        <td>${x.eligible ? "✓" : "✗"}</td><td>${esc(x.why)}</td><td>${esc(x.verdict)}</td><td>${statusBadge(x.science)}</td>
+        <td>${x.ss_oos != null ? (x.ss_oos >= 0 ? "+" : "") + Number(x.ss_oos).toFixed(4) : "—"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="small muted">Eligible to win: ${esc(ch.eligibility || "")}.</p></section>` : "";
+  const holdText = primary && primary.science
+    ? `No scroll predicted unseen, matched patients better than the Gatekeeper's benchmark (${esc(f.campaign.comparator)}, no drug effect) with a gain unlikely to be luck. The question itself is ${esc(primary.science.status.toLowerCase())}: ${esc(primary.science.why || "")}`
+    : `No scroll predicted unseen, matched patients better than the Gatekeeper's benchmark (${esc(f.campaign.comparator)}, no drug effect) with a gain unlikely to be luck.`;
+  const arc = f.archive;
+  const broken = arc && arc.check && !arc.check.complete;
   $("brief").innerHTML = `
     <p class="disclaimer">${esc(b.disclaimer)}</p>
+    ${broken ? `<p class="trace-warn" role="alert">The Archivist's trace is incomplete: ${arc.check.problems.length} problem${arc.check.problems.length === 1 ? "" : "s"}. Open the Archivist's Ledger tab before relying on any number below.</p>` : ""}
     <header class="brief-head"><small>Research Decision Brief · Campaign ${esc(f.campaign.letter)}</small>
       <h2>${esc(f.campaign.title)}</h2><p class="q">${esc(f.campaign.question)}</p></header>
+    <div class="brief-tabs" role="tablist">
+      <button class="tab" role="tab" id="tab-brief" aria-selected="true" aria-controls="pane-brief">Research Decision Brief</button>
+      ${arc ? `<button class="tab" role="tab" id="tab-arc" aria-selected="false" aria-controls="pane-arc">📜 Archivist's Ledger · Sources &amp; Methods</button>` : ""}
+    </div>
+    <div id="pane-brief" role="tabpanel" aria-labelledby="tab-brief">
     <section class="decision ${f.baseline_holds ? "hold" : "go"}"><small>Decision</small><h3>${esc(b.decision)}</h3><p>${esc(b.recommendation)}</p></section>
+    ${challenger}
     ${champ ? `<section class="champ-card"><img src="${portrait(champ.archetype)}" alt="" width="48" height="48">
-        <div><small>Champion scroll</small><strong>${esc(champ.name)}, ${esc(champ.title || "")}</strong>
+        <div><small>Champion scroll${primary && tracks.length > 1 ? ` · ${esc(primary.label)}` : ""}</small><strong>${esc(champ.name)}, ${esc(champ.title || "")}</strong>
         <p>"${esc(champ.claim)}"</p><p class="muted">Outcome: ${esc(champ.outcome)} · ${champ.design === "new_user" ? "new-user, time-zero design" : "design as carried"} · K = ${champ.K}</p></div></section>`
-      : `<section class="champ-card hold"><img src="${portrait("gatekeeper")}" alt="" width="48" height="48"><div><small>Result</small><strong>Baseline Holds: inconclusive</strong>
-        <p>No scroll predicted unseen, matched patients better than the Gatekeeper's benchmark (${esc(f.campaign.comparator)}, no drug effect) with a gain unlikely to be luck.</p></div></section>`}
+      : `<section class="champ-card hold"><img src="${portrait("gatekeeper")}" alt="" width="48" height="48"><div><small>Result</small><strong>Baseline Holds${b.status ? `: question ${esc(b.status.toLowerCase())}` : ""}</strong>
+        <p>${holdText}</p></div></section>`}
+    ${science}
     ${b.evidence.length ? `<section><h3>Evidence</h3><ul class="evidence">${evid(b.evidence)}</ul></section>` : ""}
     ${b.misleading.length ? `<section><h3>What misled the others</h3><ul class="evidence">${evid(b.misleading)}</ul></section>` : ""}
     <section><h3>Uncertainty</h3><p>${esc(b.uncertainty)}</p></section>
@@ -134,24 +196,68 @@ function renderBrief(f) {
       <thead><tr><th>#</th><th>Scroll</th><th>Verdict</th><th>SS<sub>oos</sub></th><th>Paired p</th><th>HP</th><th>Traps</th><th>Credits</th>
       <th title="${esc(f.score_rules.skill)}">Skill</th><th title="${esc(f.score_rules.hp)}">HP pts</th><th title="${esc(f.score_rules.traps)}">Trap pts</th>
       <th title="${esc(f.score_rules.efficiency)}">Efficiency</th><th>Total</th></tr></thead><tbody>${scoreRows}</tbody></table></div>
-      <p class="small muted">Score = ${Object.values(f.score_rules).map(esc).join(" + ")}. The champion is the highest-scoring VALIDATED scroll.</p></section>
+      <p class="small muted">Score = ${Object.values(f.score_rules).map(esc).join(" + ")}. Each question's champion is its highest-scoring VALIDATED scroll; scrolls on different questions are never ranked against each other.</p></section>
     <div class="two">
       <section><h3>HP after each level</h3>${hpChart(f.ranking)}</section>
       <section><h3>Where the HP went</h3><ul class="dmg">${dmg || "<li>No damage dealt.</li>"}</ul></section>
     </div>
     <section><details class="truth"><summary>Reveal the planted truth of this simulated world</summary><p>${esc(f.truth)}</p></details></section>
     <p class="small muted">${f.totals.encounters} encounters · ${f.totals.credits_spent} credits spent · ${f.totals.traps_sprung} traps sprung · ${f.totals.shattered} shattered</p>
+    </div>
+    ${arc ? `<div id="pane-arc" role="tabpanel" aria-labelledby="tab-arc" hidden>${archivistHTML(arc, cite)}</div>` : ""}
     <div class="brief-buttons"><button class="btn" id="back-log">Back to the battle log</button>
-      <button class="btn" id="dl">Download the ledger (JSONL)</button><button class="btn gold" id="again">Choose another campaign</button></div>`;
+      <button class="btn" id="dl">Download the ledger (JSONL)</button>
+      ${arc ? '<button class="btn" id="dl-manifest">Download the manifest (JSON)</button>' : ""}
+      <button class="btn gold" id="again">Choose another campaign</button></div>`;
   for (const c of document.querySelectorAll("[data-cite]")) c.onclick = () => openCite(c.dataset.cite);
+  for (const t of document.querySelectorAll(".brief-tabs .tab")) {
+    t.onclick = () => {
+      for (const o of document.querySelectorAll(".brief-tabs .tab")) {
+        o.setAttribute("aria-selected", String(o === t));
+        $(o.getAttribute("aria-controls")).hidden = o !== t;
+      }
+    };
+  }
   $("back-log").onclick = backToLog;
   $("again").onclick = exitGame;
-  $("dl").onclick = () => {
-    const blob = new Blob([G.state.events.map((e) => JSON.stringify(e)).join("\n") + "\n"], { type: "application/x-ndjson" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob); a.download = `pep-${f.campaign.letter}-ledger.jsonl`; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-  };
+  $("dl").onclick = () => download(G.state.events.map((e) => JSON.stringify(e)).join("\n") + "\n", "application/x-ndjson",
+                                    `pep-${f.campaign.letter}-ledger.jsonl`);
+  if (arc) $("dl-manifest").onclick = () => download(JSON.stringify(arc, null, 2) + "\n", "application/json",
+                                                      `pep-${f.campaign.letter}-manifest.json`);
+}
+
+function download(text, type, name) {
+  const a = document.createElement("a");
+  a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// The Archivist's Ledger: every source a number came from, the method behind every encounter, and the manifest's hash.
+function archivistHTML(arc, cite) {
+  const ok = arc.check && arc.check.complete;
+  const short = (h) => (h ? `<code title="${esc(h)}">${esc(h.slice(0, 12))}…</code>` : "—");
+  const fp = Object.entries(arc.fingerprints || {}).map(([k, v]) => `<tr><th>${esc(k)}</th><td>${short(v)}</td></tr>`).join("");
+  const src = (arc.sources || []).map((x) => `<tr><td><code>${esc(x.id)}</code></td><td><span class="stype t-${esc(x.type)}">${esc(x.type.replace(/_/g, " "))}</span></td>
+    <td>${esc(x.label)}${x.sealed ? ' <span class="tag">sealed</span>' : ""}${x.opened_by_spec ? ` <small>opened once by the locked spec ${esc(x.opened_by_spec.slice(0, 12))}…</small>` : ""}</td>
+    <td>${esc((x.usage || "").replace(/_/g, " ").toLowerCase())}</td><td>${short(x.sha256 || x.claim_sha256)}</td></tr>`).join("");
+  const methods = Object.entries(arc.methods || {}).map(([k, v]) => `<li><code>${esc(k)}</code> ${esc(v)}</li>`).join("");
+  const trace = (arc.trace || []).map((r) => `<tr><td>${cite(r.encounter)}</td><td>${ROMAN[r.level] || r.level || ""}</td><td>${esc(r.scroll || "")}</td>
+    <td>${esc(r.enemy || "")}</td><td><code>${esc(r.method || "")}</code></td><td>${(r.sources || []).map((x) => `<code>${esc(x)}</code>`).join(" ")}</td></tr>`).join("");
+  return `<section class="archivist">
+    <p class="trace-check ${ok ? "ok" : "bad"}">${ok
+      ? `Trace complete: every one of ${arc.check.encounters} encounters names a known method and only registered sources, and every citation in the brief points at a traced encounter.`
+      : `Trace incomplete: ${arc.check.problems.map(esc).join("; ")}`}</p>
+    <table class="nums"><tr><th>Run</th><td><code>${esc(arc.run_id)}</code></td></tr>
+      <tr><th>Campaign · seed</th><td>${esc(arc.campaign)} · ${arc.seed}</td></tr>
+      <tr><th>Ruleset · generator</th><td><code>${esc(arc.ruleset_version)}</code> · <code>${esc(arc.generator)}</code></td></tr>
+      <tr><th>Manifest SHA-256</th><td><code>${esc(arc.sha256)}</code></td></tr>
+      ${arc.trial ? `<tr><th>Trial of Truth</th><td>${esc(arc.trial.outcome || "")} · spec ${short(arc.trial.spec_sha256)}</td></tr>` : ""}</table>
+    <h3>Commitments</h3><p class="small muted">SHA-256 of each partition of the simulated cohort, published in the first ledger row before anything was measured.</p>
+    <table class="nums">${fp}</table>
+    <h3>Sources</h3><div class="table-wrap"><table class="score"><thead><tr><th>Id</th><th>Type</th><th>What it is</th><th>Use</th><th>SHA-256</th></tr></thead><tbody>${src}</tbody></table></div>
+    <h3>Methods used</h3><ul class="methods">${methods}</ul>
+    <h3>Trace</h3><div class="table-wrap"><table class="score"><thead><tr><th>Encounter</th><th>Lv</th><th>Scroll</th><th>Enemy</th><th>Method</th><th>Sources</th></tr></thead><tbody>${trace}</tbody></table></div>
+  </section>`;
 }
 
 function backToLog() {

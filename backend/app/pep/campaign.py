@@ -14,11 +14,13 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
+from . import challenges as C
 from . import judge as J
-from . import bridge, hypotheses, report, rules
+from . import sources as S
+from . import bridge, champions, hypotheses, report, rules
 from .agents import Decision, ScriptedHero, menu_for
 from .campaigns import ARCHETYPES, CAMPAIGNS, HERO
-from .world import COVARIATE_LABELS, HOLDOUT_END, SITES, TRAIN_END, Scroll, World
+from .world import COVARIATE_LABELS, GENERATOR_VERSION, HOLDOUT_END, SITES, TRAIN_END, Scroll, World
 
 
 class QuestStopped(Exception):
@@ -70,7 +72,8 @@ class Agent:
         return {"id": self.id, "name": self.name, "archetype": self.archetype, "title": arch["title"],
                 "nickname": arch["nickname"], "cls": arch["cls"], "claim": self.claim, "outcome": o.label,
                 "origin": self.scroll.origin, "K": self.st.K, "design": self.st.design, "hp": self.hp,
-                "credits": self.credits, "buffs": list(self.buffs), "kind": "scroll",
+                "credits": self.credits, "buffs": list(self.buffs), "kind": "scroll", "track": self.st.outcome,
+                "version": self.scroll.version, "parent": self.scroll.parent, "champion": self.scroll.champion,
                 "evidence": "real" if self.scroll.evidence_real else "simulated", "real_evidence": self._real()}
 
     def _real(self) -> dict | None:
@@ -86,14 +89,24 @@ class Agent:
 
 class PepQuest:
     def __init__(self, run_id: str, campaign: str, ledger, hero=None, seed: int = 0, pace: float = 0.0,
-                 n_scrolls: int | None = None, scribe=None):
+                 n_scrolls: int | None = None, scribe=None, challenger: bool = False, champions_path=None):
         self.run_id, self.c = run_id, CAMPAIGNS[campaign]
         # n_scrolls=None: the campaign's three hand-written scrolls. A number: the Scribe (hypotheses.py) forms
         # that many from the real evidence database, with Claude when `scribe` (a complete function) is given.
         self.n_scrolls, self.scribe = n_scrolls, scribe
+        # Challenger Mode (champions.py): this quest is one round of the campaign's title track, on a fresh cohort.
+        self.champions_path = champions_path or champions.PATH
+        self.challenger = champions.plan(self.c, self.champions_path) if challenger else None
+        if self.challenger is not None:
+            seed = self.challenger["seed"]
         self.ledger, self.seed, self.pace = ledger, seed, pace
         self.brain = hero or ScriptedHero()
         self.w = World(self.c, seed)
+        self.sources = S.Registry()       # the Archivist's Ledger (sources.py)
+        # Lifetime: a quest nobody is watching stops itself (main.py sets idle_limit; scripts and tests do not).
+        self.last_seen = time.time()
+        self.idle_limit: float | None = None
+        self.timed_out = False
         self.agents: dict[str, Agent] = {}
         self.level = 0
         self._enc = 0
@@ -121,20 +134,34 @@ class PepQuest:
                     self.director.checkpoint(level)  # wait until the screen has shown this level
             return bridge.endgame(self)
         except QuestStopped:
-            self.ledger.write(level=self.level, actor="system", action="stopped",
-                              line="The Research Director left the gauntlet, so the expedition was stopped.")
+            self._write_stop()
             return None
         except Exception as e:  # never end silently: say what broke (or that the player left meanwhile)
             if self._stop:
-                self.ledger.write(level=self.level, actor="system", action="stopped",
-                                  line="The Research Director left the gauntlet, so the expedition was stopped.")
+                self._write_stop()
             else:
                 self.ledger.write(level=self.level, actor="system", action="error",
                                   line=f"The expedition was halted: {e!r}"[:300])
             return None
 
+    def _write_stop(self) -> None:
+        if self.timed_out:
+            self.ledger.write(level=self.level, actor="system", action="timeout",
+                              line=f"Nobody watched this expedition for {int(self.idle_limit or 0)} seconds, so it was "
+                                   "stopped to free the server. Start it again from the title screen.")
+        else:
+            self.ledger.write(level=self.level, actor="system", action="stopped",
+                              line="The Research Director left the gauntlet, so the expedition was stopped.")
+
     def stop(self) -> None:
         self._stop = True
+
+    def touch(self) -> None:
+        """Someone is still watching (the screen polled, or the Director acted)."""
+        self.last_seen = time.time()
+
+    def idle(self) -> bool:
+        return self.idle_limit is not None and time.time() - self.last_seen > self.idle_limit
 
     def start(self) -> None:
         c, w = self.c, self.w
@@ -146,16 +173,24 @@ class PepQuest:
                          "sites": [{"name": n, "rural": r} for n, r in SITES], "patients": c.n,
                          "split": {"train": tr, "holdout": ho, "vault2": c.n - tr - ho,
                                    "train_end_day": TRAIN_END, "holdout_end_day": HOLDOUT_END}},
-            "simulated": True, "hero": HERO,
+            "simulated": True, "hero": HERO, "seed": self.seed, "ruleset_version": rules.RULESET_VERSION,
+            # a commitment to each partition of the simulated cohort, published before anything is measured
+            "dataset": {"generator": GENERATOR_VERSION, "campaign": c.id, "seed": self.seed, "fingerprints": w.fingerprints},
             "gatekeeper": {**ARCHETYPES["SKEPTIC"], "baseline": c.comparator},
             "rules": {"levels": rules.LEVELS, "enemies": rules.ENEMIES, "abilities": rules.ABILITIES,
                       "d_max": rules.D_MAX, "score_weights": rules.SCORE_WEIGHTS, "score_rules": rules.SCORE_RULES,
                       "verdicts": rules.VERDICTS, "trap_labels": rules.TRAP_LABELS, "traps": rules.TRAPS,
-                      "starting_hp": rules.STARTING_HP, "starting_credits": rules.STARTING_CREDITS},
+                      "starting_hp": rules.STARTING_HP, "starting_credits": rules.STARTING_CREDITS,
+                      "ruleset_version": rules.RULESET_VERSION, "mystery_hp": rules.MYSTERY_HP, "science": rules.SCIENCE,
+                      "sesoi_rr": rules.SESOI[c.effect_direction],
+                      "challenges": {k: {f: v[f] for f in ("boss", "key", "question", "test", "ability", "rule")}
+                                     for k, v in C.ARCHETYPES.items()}},
             "archetypes": ARCHETYPES,
         })
         scrolls = c.scrolls
-        if self.n_scrolls is not None:
+        if self.challenger is not None:
+            scrolls = self._challenger_roster()
+        elif self.n_scrolls is not None:
             scrolls, formed = hypotheses.form(c, self.n_scrolls, self.scribe)
             who = "Claude, the Scribe," if formed["source"] == "claude" else "The Scribe"
             src = ("the real literature (Europe PMC) and trial registry (ClinicalTrials.gov)" if formed["evidence"] == "real"
@@ -175,8 +210,16 @@ class PepQuest:
                 how += (f" Real evidence ({s.evidence_topic}): {len(s.literature.records)} papers "
                         f"({sp['human']} human, {sp['rodent']} animal, {sp['in vitro']} in vitro) and "
                         f"{s.n_rct} completed randomized trial{'' if s.n_rct == 1 else 's'}.")
+            if s.champion:
+                how += (f" The reigning champion ({s.champion['hid']}): its words are frozen, and it must win again on "
+                        "patients nobody has seen.")
             self._emit(actor="system", action="recruit", agent=a, line=f"The Alchemist takes up {s.title}: \"{s.claim}\"",
                        explain=how, payload={"agent": a.public(w)})
+        S.register_world(self.sources, self)
+        self._emit(actor="system", action="sources_registered",
+                   line=f"The Archivist registers {len(self.sources.items)} sources and {len(S.METHODS)} methods.",
+                   explain="Every number the Judge shows names the method that measured it and the sources it read.",
+                   result={"sources": self.sources.public(), "methods": S.METHODS, "ruleset_version": rules.RULESET_VERSION})
         self._gate(0, f"I am the Warden of the Null. My baseline is {report._comp(c)}, with no drug effect at all. "
                       "Your scrolls must beat it on patients you have never seen.")
 
@@ -310,7 +353,7 @@ class PepQuest:
                    line=out["line"], explain=out["plain"], payload={
                        "numbers": _round(out.get("numbers", {})), "chart": out.get("chart"),
                        "formula": out.get("text"), "term": term, "raw": round(raw, 3), "heal": heal,
-                       "scout": not term},
+                       "scout": not term, **({"science": out["science"]} if out.get("science") else {})},
                    encounter=enc)
         if a.hp <= 0 and a.active:
             a.status, a.verdict = "shattered", "SHATTERED"
@@ -482,14 +525,18 @@ class PepQuest:
                 a.eureka = eureka
                 untrusted_gain = not time_zero and m["ss_oos"] > rules.SS_MARGIN and m["p_dm"] < rules.ALPHA
                 ob, pr = m["observed"], m["predicted"]
+                sci, eff = m["science"], m["effect"]
+                science = {"status": sci["status"], "why": sci["why"], "sesoi_rr": sci["sesoi_rr"], "mde_rr": sci["mde_rr"],
+                           "rr": eff["rr"], "lo": eff["lo"], "hi": eff["hi"], "p": eff["p"], "method": eff["method"],
+                           "events_treated": eff["events_treated"], "events_comparator": eff["events_comparator"]}
                 if m.get("no_overlap"):
-                    return {"raw": raw, "heal": 0, "eureka": False,
+                    return {"raw": raw, "heal": 0, "eureka": False, "science": science,
                             "line": f"Only {m['matched_pairs']} matched holdout pair(s): no overlap between users and comparators, so no skill can be shown.",
                             "plain": "Peptide users and comparators in the holdout are too different to compare like with like.",
                             "text": f"matched pairs = {m['matched_pairs']} < 2; D_final = {raw:.1f}",
                             "latex": f"n_{{pairs}} = {m['matched_pairs']}",
                             "numbers": {"matched_pairs": m["matched_pairs"], "rr_used": math.exp(m["beta_used"])}}
-                return {"raw": raw, "heal": rules.EUREKA_HEAL if eureka else 0, "eureka": eureka,
+                return {"raw": raw, "heal": rules.EUREKA_HEAL if eureka else 0, "eureka": eureka, "science": science,
                         "line": f"SS_oos = {m['ss_oos']:+.4f} on {m['matched_pairs']} matched holdout pairs; paired p = {m['p_dm']:.3g}"
                                 + (". Eureka! +10 HP" if eureka else
                                    ", but on a design with immortal time, so the gain is not trusted." if untrusted_gain else "."),
@@ -498,12 +545,14 @@ class PepQuest:
                                   "It beat the comparator, but its effect was measured with immortal time, which inflates it; "
                                   "only a time-zero (new-user) design can earn a Eureka." if untrusted_gain else
                                   "It predicted unseen patients no better than the comparator." if m["ss_oos"] >= -rules.SS_MARGIN else
-                                  f"Its effect made predictions {abs(m['ss_oos']) * 100:.1f}% worse than assuming no drug effect at all."),
+                                  f"Its effect made predictions {abs(m['ss_oos']) * 100:.1f}% worse than assuming no drug effect at all.")
+                                 + f" Scientific status of the question: {sci['status']}.",
                         "text": f"SS = 1 - {m['loss_scroll']:.5f} / {m['loss_comparator']:.5f} = {m['ss_oos']:.4f}; paired p = {m['p_dm']:.3g}; D_final = {raw:.1f}",
                         "latex": f"SS_{{oos}} = 1 - \\frac{{{m['loss_scroll']:.5f}}}{{{m['loss_comparator']:.5f}}} = {m['ss_oos']:.4f}",
                         "numbers": {"ss_oos": m["ss_oos"], "p_dm": m["p_dm"], "matched_pairs": m["matched_pairs"],
                                     "loss_scroll": m["loss_scroll"], "loss_comparator": m["loss_comparator"],
-                                    "rr_used": math.exp(m["beta_used"])},
+                                    "rr_used": math.exp(m["beta_used"]), "rr_matched": eff["rr"], "rr_lo": eff["lo"],
+                                    "rr_hi": eff["hi"], "mde_rr": sci["mde_rr"]},
                         "chart": {"kind": "grouped", "title": "Vaulted holdout, matched: one-year risk observed vs predicted",
                                   "groups": [{"label": "Peptide users", "values": {"observed": ob["treated"], "scroll": pr["scroll_treated"], "baseline": pr["baseline_treated"]}},
                                              {"label": "Comparators", "values": {"observed": ob["comparator"], "scroll": pr["scroll_comparator"], "baseline": pr["baseline_comparator"]}}]}}
@@ -536,8 +585,37 @@ class PepQuest:
         if self.trial is not None:
             result["overworld"] = bridge.overworld(self)
             result["headline"] = _trial_headline(self.trial)
+        if self.challenger is not None:
+            upd = champions.settle(self, result, self.champions_path)
+            result["challenger"] = upd
+            self._emit(actor="system", action="champion_update", line=f"Challenger round {upd['round']}: {upd['result']}"
+                       + (f" ({upd['winner_name']})." if upd.get("winner_name") else "."), explain=upd["why"], result=upd)
+        report.archive(self, result)
         self._emit(actor="system", action="finale", line=result["headline"], result=result)
         return result
+
+    def _challenger_roster(self) -> list:
+        """One Challenger round: the incumbent (frozen), then challengers with a different structure."""
+        c, p = self.c, self.challenger
+        inc = p["incumbent"]
+        roster, exclude = [], set()
+        if inc:
+            roster.append(hypotheses.incumbent(c, inc))
+            exclude.add((inc["spec"]["outcome"], inc["spec"]["archetype"]))
+        n = self.n_scrolls or len(c.scrolls)
+        new, formed = hypotheses.form(c, max(1, n - len(roster)), self.scribe, exclude=exclude,
+                                      prefer=c.outcomes[0].key, minimum=1)
+        self._emit(actor="system", action="challenger_roster",
+                   line=(f"Challenger round {p['round']} for {c.outcomes[0].label.lower()}: "
+                         + (f"the champion {inc['hid']} defends against {len(new)} challenger{'s' if len(new) != 1 else ''}."
+                            if inc else f"the title is vacant; {len(new)} challengers compete for it.")),
+                   explain=(f"A fresh simulated cohort (seed {p['seed']}). The champion's words are frozen and hashed; "
+                            "every challenger differs from it in outcome or archetype. Eligible to win: "
+                            + champions.ELIGIBILITY + "."),
+                   result={"track": p["track"], "subject": p["subject"], "round": p["round"], "seed": p["seed"],
+                           "incumbent": inc, "challengers": [s.key for s in new], "formed": formed,
+                           "eligibility": champions.ELIGIBILITY, "results": champions.RESULTS})
+        return roster + new
 
     # ---------- internals ----------
 
@@ -549,16 +627,21 @@ class PepQuest:
         self._enc += 1
         cast = [k for lv in a.cast.values() for k in lv]
         action = next((k for k in ENEMY_ACTION.get(enemy["key"], ()) if k in cast), "NONE")
+        method, kinds = S.ENEMY_TRACE[enemy["key"]]
         return {
             "encounterId": f"E{self._enc:03d}", "campaignType": self.c.id, "level": level,
             "enemyName": enemy["name"], "trapType": rules.TRAPS[level], "scrollId": a.id, "scrollTitle": a.name,
             "heroAction": action, "biostatMetrics": report.biostat(a),
+            "methodId": method, "sourceIds": self.sources.ids_for(kinds, a.id), "rulesetVersion": rules.RULESET_VERSION,
             "combatResolution": {"rawDamage": round(raw, 3), "abilityMultiplier": m_ab, "clampedHpDelta": applied,
                                  "executedFormulaLatex": out.get("latex", ""), "plainEnglishVerdict": out["plain"]},
         }
 
     def _emit(self, agent: Agent | None = None, payload: dict | None = None, **fields) -> None:
         if self._stop:
+            raise QuestStopped
+        if self.idle():
+            self.timed_out, self._stop = True, True
             raise QuestStopped
         if agent is not None:
             fields.update(agent_id=agent.id, hp=agent.hp, credits=agent.credits, status=agent.status,

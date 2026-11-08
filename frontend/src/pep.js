@@ -10,6 +10,7 @@ const FALLBACK_CAMPAIGNS = ["A", "B", "C", "D"];
 const G = {
   campaigns: [], pick: "A", server: false, claude: false,
   counts: {},   // campaign letter -> how many hypotheses the Scribe forms ("" = the three hand-written scrolls)
+  champions: null,   // Challenger Mode: each campaign's title track and its reigning champion (GET /api/champions)
   mode: null, questId: null, poll: null, token: 0,
   state: initial(), pending: [], done: false,
   running: true, speed: 1, nextAt: 0, hold: false,
@@ -56,8 +57,11 @@ async function boot() {
   renderCards();
   $("llm-wrap").hidden = !G.claude;
   $("count-wrap").hidden = !G.server;
+  $("challenger-wrap").hidden = !G.server;
   $("count").onchange = () => { G.counts[G.pick] = $("count").value; };
+  $("challenger").onchange = syncChampion;
   syncCount();
+  refreshChampions();
   $("who").textContent = G.server
     ? (G.claude ? "Server ready. Claude can play the Alchemist, or the hero follows each scroll's scripted plan."
                 : "Server ready. The Alchemist follows each scroll's scripted plan (add an API key to let Claude play).")
@@ -78,7 +82,7 @@ function renderCards() {
     b.onclick = () => {
       G.pick = b.dataset.letter;
       for (const o of document.querySelectorAll(".card")) o.setAttribute("aria-checked", String(o === b));
-      syncCount();
+      syncCount(); syncChampion();
     };
   }
 }
@@ -96,6 +100,28 @@ function syncCount() {   // the hypothesis picker shows the number chosen for th
   if ($("count")) $("count").value = G.counts[G.pick] || "";
 }
 
+// Challenger Mode: the selected campaign's title track, its reigning champion and its record (all from the registry)
+async function refreshChampions() {
+  if (!G.server) return;
+  try { G.champions = await fetch("/api/champions").then((r) => (r.ok ? r.json() : null)); } catch { G.champions = null; }
+  syncChampion();
+}
+
+function syncChampion() {
+  const el = $("champ-line"), c = G.campaigns.find((x) => x.letter === G.pick);
+  const track = c && c.track && G.champions && G.champions.tracks ? G.champions.tracks[c.track] : null;
+  if (!G.server || !c || !c.track) { el.hidden = true; return; }
+  const on = $("challenger").checked, ch = track && track.champion;
+  const record = ch ? `won round ${ch.won_round}${ch.defended ? `, defended ${ch.defended}×` : ""}${ch.not_defended ? `, not defended ${ch.not_defended}×` : ""}` : "";
+  el.hidden = false;
+  el.classList.toggle("on", on);
+  el.innerHTML = `<b>Title track ${esc(c.track)}</b> · ${ch
+    ? `Champion <strong>${esc(ch.hid)}</strong> “${esc(ch.spec.title)}” (${esc(record)})`
+    : track && track.rounds ? `the title is vacant after ${track.rounds} round${track.rounds === 1 ? "" : "s"}` : "no round played yet: the title is vacant"}
+    ${on ? `<br><small>Next: round ${(track && track.rounds || 0) + 1}, on a fresh cohort (seed ${(track && track.rounds || 0) + 1}). ${ch
+      ? "The champion's words are frozen; every challenger differs from it in outcome or archetype." : "Every challenger competes for the vacant title."}</small>` : ""}`;
+}
+
 // ---------- starting, polling, exiting ----------
 
 async function startGame(mode) {
@@ -107,6 +133,7 @@ async function startGame(mode) {
   $("party").innerHTML = ""; G.cards = {}; G.nodesHTML = "";
   $("screen-title").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-game").hidden = false;
   $("ledger").tBodies[0].innerHTML = ""; $("f-agent").innerHTML = '<option value="">Everyone</option>';
+  $("insp-id").textContent = ""; $("insp-body").innerHTML = '<p class="muted">When the Judge runs a test, it appears here.</p>';
   G.bubbleUntil = 0; $("gate-bubble").hidden = true;
   setRun(true); renderAll();
   ticker("Opening the campaign…", "");
@@ -114,13 +141,18 @@ async function startGame(mode) {
     try {
       const res = await fetch("/api/quests", { method: "POST", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ campaign: G.pick, llm: G.claude && $("llm").checked, interactive: true,
+                               challenger: $("challenger").checked,
                                ...(G.counts[G.pick] ? { scrolls: Number(G.counts[G.pick]) } : {}) }) });
+      if (res.status === 429) {   // the server is full: say so plainly, then play the recording
+        const j = await res.json().catch(() => ({}));
+        throw new Error(`The server is busy: ${j.detail || "too many expeditions are running"}`);
+      }
       if (!res.ok) throw new Error(await res.text());
       G.questId = (await res.json()).quest_id;
       G.interactive = true;
       pollLive(token, 0);
     } catch (err) {
-      ticker("Could not start a live campaign, so the recorded run plays instead.", String(err).slice(0, 160));
+      ticker("Could not start a live campaign, so the recorded run plays instead.", String(err.message || err).slice(0, 200));
       loadDemo(token);
     }
   } else {
@@ -156,6 +188,7 @@ function exitGame() {
   for (const d of document.querySelectorAll("dialog[open]")) d.close();
   $("screen-game").hidden = true; $("screen-room").hidden = true; $("screen-bridge").hidden = true; $("screen-title").hidden = false;
   history.replaceState(null, "", location.pathname);
+  refreshChampions();
 }
 
 // ---------- playback ----------
@@ -188,6 +221,10 @@ function onEvent(e) {
     banner(`Level ${ROMAN[e.level]}: ${e.result.name}`, e.result.trap);
   }
   if (e.action === "encounter" && e.result.boss) { banner(e.result.enemy.name, "BOSS"); shakeStage(420, 2); }
+  if (e.action === "challenger_roster") {
+    banner(`Challenger round ${e.result.round}`, e.result.incumbent ? `${e.result.incumbent.hid} defends the title` : "The title is vacant");
+  }
+  if (e.action === "champion_update") banner(e.result.result, e.result.winner_name || "");
   if (e.action === "result" || e.action === "mystery_result") {
     if (!G.pinned) inspect(e);
     const d = e.hp_delta || 0, id = e.agent_id;
@@ -226,7 +263,7 @@ function onEvent(e) {
   if (typeof directorEvent === "function") directorEvent(e);
   if (typeof bridgeEvent === "function") bridgeEvent(e);
   if (e.action === "finale" && $("screen-bridge").hidden) finaleReached();
-  if (e.action === "stopped" || e.action === "error") ticker(e.line, "");
+  if (e.action === "stopped" || e.action === "error" || e.action === "timeout") ticker(e.line, "");
   renderAll();
 }
 
@@ -354,7 +391,7 @@ function drawStage(ctx, now) {
     const t = k / 12, x = HERO[0] + 16 + (fp.x - HERO[0] - 16) * t, y = HERO[1] - 22 + (fp.y - 12 - HERO[1] + 22) * t;
     rect(ctx, x, y, 1, 1, "#7fe0ff");
   }
-  // the three scrolls
+  // the scrolls
   s.order.forEach((id, i) => {
     const a = s.agents[id];
     const [tx, ty] = scrollAt(s, id);
@@ -450,6 +487,15 @@ function speak(text, benchmark) {
 function renderAll() {
   renderNodes(); renderParty(); renderEnemy(); renderHud();
   $("ledger-count").textContent = `${G.state.events.length} rows`;
+  renderProgress();
+}
+
+// Where playback is: a recording shows "row X / Y"; a live expedition shows how many rows wait to be shown.
+function renderProgress() {
+  const shown = G.state.events.length, total = shown + G.pending.length;
+  const text = G.mode === "demo" ? (total ? `Replaying row ${shown} / ${total}` : "")
+    : G.done ? `Row ${shown} / ${total}` : `Live · row ${shown}${G.pending.length ? ` · ${G.pending.length} queued` : ""}`;
+  if ($("progress").textContent !== text) $("progress").textContent = text;
 }
 
 function renderNodes() {
@@ -518,6 +564,7 @@ function renderParty() {
     tweenNumber(span, a.hp, G.reduced ? 0 : 500, " HP");
     const cast = a.abilities[s.level] || [];
     const meta = `<span title="Research credits left">◆ ${a.credits}</span>
+      ${a.champion ? `<span class="champ-badge" title="The reigning champion of this title track: its words are frozen (hash ${esc((a.champion.claim_hash || "").slice(0, 12))}…)">♛ ${esc(a.champion.hid)}</span>` : ""}
       ${a.verdict ? `<span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}
       ${cast.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join("")}`;
     const m = li.querySelector(".meta");
@@ -550,8 +597,10 @@ function openScroll(id) {
     <h3>${esc(a.name)}</h3>
     <blockquote class="hyp">${esc(a.claim)}</blockquote>
     <table class="nums">
-      <tr><th>Outcome tested</th><td>${esc(a.outcome || "")}</td></tr>
+      <tr><th>Outcome tested</th><td>${esc(a.outcome || "")}${a.track ? ` <span class="muted">(track ${esc(a.track)})</span>` : ""}</td></tr>
       <tr><th>Where it came from</th><td>${esc(a.origin || "")}</td></tr>
+      ${a.champion ? `<tr><th>Champion</th><td>${esc(a.champion.hid)}: won round ${a.champion.won_round}${a.champion.defended ? `, defended ${a.champion.defended}×` : ""}.
+        Its words are frozen (SHA-256 ${esc((a.champion.claim_hash || "").slice(0, 16))}…); every number is measured again on this round's patients.</td></tr>` : ""}
       <tr><th>Status</th><td>${a.hp} HP · ◆ ${a.credits}${a.verdict ? ` · <span class="verdict v-${a.verdict.replace(/\s/g, "")}">${esc(a.verdict)}</span>` : ""}</td></tr>
     </table>
     ${evidence}
@@ -644,9 +693,11 @@ function inspect(e) {
         <dt>Result</dt><dd>${esc(e.line || "")}</dd>
         <dt>In plain English</dt><dd>${esc(e.explain || "")}</dd>
       </dl>`;
+    if (r.science) html += scienceHTML(r.science);
     if (r.chart) html += chartHTML(r.chart);
     const nums = Object.entries(r.numbers || {});
     if (nums.length) html += `<table class="nums">${nums.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${fmt(v)}</td></tr>`).join("")}</table>`;
+    html += traceHTML(tele);
     if (tele.encounterId) {
       html += `<div class="clamp"><span>ΔHP = −round(clamp(D<sub>raw</sub> × M, 0, D<sub>max</sub>))</span>
         <span>= −round(clamp(${fmt(cr.rawDamage)} × ${fmt(cr.abilityMultiplier)}, 0, ${dmax}))${r.heal ? ` + ${r.heal} heal` : ""}</span>
@@ -662,7 +713,9 @@ function inspect(e) {
     if (r.chart) html += chartHTML(r.chart);
     const nums = Object.entries(r.numbers || {});
     if (nums.length) html += `<table class="nums">${nums.map(([k, v]) => `<tr><th>${esc(k)}</th><td>${fmt(v)}</td></tr>`).join("")}</table>`;
-    if (e.encounter) html += `<details><summary>Telemetry record</summary><pre>${esc(JSON.stringify(e.encounter, null, 2))}</pre></details>`;
+    if (e.encounter) html += traceHTML(e.encounter) + `<details><summary>Telemetry record</summary><pre>${esc(JSON.stringify(e.encounter, null, 2))}</pre></details>`;
+    if (e.action === "sources_registered") html += sourcesHTML(r.sources || []);
+    if (e.action === "source_registered" && r.source) html += sourcesHTML([r.source]);
     if (e.action === "decision") {
       const picks = (e.result && e.result.abilities) || [];
       html += `<p>Cast: ${picks.length ? picks.map((k) => `<span class="cast">${esc(abilityName(k))}</span>`).join(" ") : "nothing"}
@@ -673,6 +726,33 @@ function inspect(e) {
   pulse($("insp-body"), "swap");
   const un = $("unpin");
   if (un) un.onclick = () => { G.pinned = null; const last = [...s.events].reverse().find((x) => x.action === "result"); if (last) inspect(last); };
+}
+
+// The scientific status of the question at the Guardian: the drug's risk ratio on unseen matched patients.
+function scienceHTML(sc) {
+  return `<div class="science s-${esc(sc.status.replace(/\s/g, ""))}"><small>Scientific status of the question</small>
+    <strong>${esc(sc.status)}</strong>${sc.below_sesoi ? ' <span class="tag">smaller than the smallest effect of interest</span>' : ""}
+    <p>${esc(sc.why || "")}</p>
+    <p class="muted small">Smallest effect of interest: risk ratio ${fmt(sc.sesoi_rr)}${sc.mde_rr ? ` · detectable with 80% power: ${fmt(sc.mde_rr)}` : ""}${sc.method ? ` · ${esc(sc.method)} interval` : ""}.
+      Prediction (the verdict) and causation (this status) are judged separately.</p></div>`;
+}
+
+// The Archivist's Ledger: which method measured this encounter, and which registered sources it read.
+function traceHTML(tele) {
+  if (!tele || !tele.methodId) return "";
+  const s = G.state, desc = (s.methods || {})[tele.methodId] || "";
+  const srcs = (tele.sourceIds || []).map((id) => {
+    const x = s.sources.find((y) => y.id === id);
+    return `<li><code>${esc(id)}</code> ${x ? `<span class="stype t-${esc(x.type)}">${esc(x.type.replace(/_/g, " "))}</span> ${esc(x.label)}` : ""}</li>`;
+  }).join("");
+  return `<dl class="insp trace"><dt>Method</dt><dd><code>${esc(tele.methodId)}</code> ${esc(desc)}</dd>
+    <dt>Sources</dt><dd>${srcs ? `<ul class="srcs">${srcs}</ul>` : "none (not measured)"}</dd>
+    ${tele.rulesetVersion ? `<dt>Ruleset</dt><dd><code>${esc(tele.rulesetVersion)}</code></dd>` : ""}</dl>`;
+}
+
+function sourcesHTML(list) {
+  return `<ul class="srcs">${list.map((x) => `<li><code>${esc(x.id)}</code> <span class="stype t-${esc(x.type)}">${esc(x.type.replace(/_/g, " "))}</span>
+    ${esc(x.label)} <span class="muted small">(${esc((x.usage || "").replace(/_/g, " ").toLowerCase())})</span></li>`).join("")}</ul>`;
 }
 
 // ---------- ledger ----------
@@ -751,7 +831,7 @@ function finaleReached() {
 // ---------- tutorial and how it works ----------
 
 const TUTORIAL = [
-  ["The battle stage", "One hero, the Alchemist-Epidemiologist, carries three hypothesis scrolls into four dungeons. Each scroll has its own research integrity (HP, the bar above it), credits (gold pips) and buffs (blue dots). A scroll at 0 HP shatters into ash; the hero walks on."],
+  ["The battle stage", "One hero, the Alchemist-Epidemiologist, carries two to six hypothesis scrolls into four dungeons. Each scroll has its own research integrity (HP, the bar above it), credits (gold pips) and buffs (blue dots). A scroll at 0 HP shatters into ash; the hero walks on."],
   ["The Gatekeeper", "The Warden of the Null speaks at every gate and sets the benchmark in the Citadel: the matched active comparator with no drug effect. It is not a scroll. A scroll is validated only if it predicts unseen patients better than that benchmark."],
   ["The combat console", "Every ruling is typed out here. Run or pause, change the speed, Step one ruling at a time, or skip the rest of a level."],
   ["The Test Inspector", "Each fight shows the test the Statistical Judge ran, the data behind it, the formula with its numbers, and the clamp that turns it into HP."],
@@ -790,19 +870,33 @@ async function showHow() {
     <p>Each campaign is a <strong>simulated</strong> world with planted, known effects: an EHR cohort across five sites,
     a social-media corpus, a literature base and a trial registry for each claim. Nothing in it is a real finding or
     medical advice. The truth is revealed at the end so you can see whether the Judge got it right.</p>
-    <p>One hero, the Alchemist-Epidemiologist, carries three hypothesis scrolls: a Hype Scroll found on social media,
-    a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study. Each scroll starts with
-    100 HP (research integrity) and 100 credits, and the hero buys abilities for it each level. The hero never
-    produces a number: the deterministic Statistical Judge measures everything and applies fixed rules,
+    <p>One hero, the Alchemist-Epidemiologist, carries hypothesis scrolls: by default a Hype Scroll found on social
+    media, a Mechanistic Scroll framed by a clinician, and a Preprint Scroll from a small study. Pick a number from 2
+    to 6 and the Scribe forms that many instead, no two with the same outcome and archetype, each with real papers
+    and trial counts copied from Europe PMC and ClinicalTrials.gov. Each scroll starts with 100 HP (research
+    integrity) and 100 credits, and the hero buys abilities for it each level. The hero never produces a number:
+    the deterministic Statistical Judge measures everything and applies fixed rules,
     <code>ΔHP = −round(clamp(D_raw × M, 0, D_max))</code>. A scroll at 0 HP shatters.</p>
-    <p>The final boss, the Guardian of False Discoveries, matches unseen holdout patients on the propensity score and
-    compares each scroll's predictions with the Gatekeeper's benchmark: the active comparator with no drug effect.
-    A scroll is <strong>validated</strong> only if it lowers the prediction loss (SS<sub>oos</sub> &gt; 0.002) and a
-    paired loss test says the gain is unlikely to be luck (p &lt; 0.05). If none is, the verdict is
-    <strong>Baseline Holds</strong>.</p>
+    <p>Levels I to III see only the training years, and every patient's follow-up is cut at the training cutoff, so
+    no test reads an outcome from the future. The final boss, the Guardian of False Discoveries, matches unseen
+    holdout patients on the propensity score and compares each scroll's predictions with the Gatekeeper's benchmark:
+    the active comparator with no drug effect. A scroll is <strong>validated</strong> only if it lowers the
+    prediction loss (SS<sub>oos</sub> &gt; 0.002) and a paired loss test says the gain is unlikely to be luck
+    (p &lt; 0.05). If none is, the verdict is <strong>Baseline Holds</strong>.</p>
+    <p>Prediction and causation are judged separately. The Guardian also measures the drug's risk ratio on the same
+    matched patients, with a 95% interval (exact for rare events), and gives the question a <strong>scientific
+    status</strong>: SUPPORTED (the interval excludes no effect), REFUTED (it excludes the smallest effect of
+    interest), or INCONCLUSIVE (it includes both), with the smallest effect these patients could detect. A champion
+    is crowned for each outcome track, never across different questions.</p>
+    <p>In the console, the seven boss chips each summon one registered test. The same test on an unchanged scroll is
+    not run again, and a kind of test that already rewarded a scroll earns it nothing more. The
+    <strong>Archivist's Ledger</strong> in the brief names the method and the sources behind every encounter, and its
+    manifest can be downloaded. A <strong>Challenger round</strong> replays a campaign's title on a fresh cohort:
+    the champion's words are frozen and it must win again against challengers that differ from it.</p>
     ${levels ? `<h3>Levels</h3><table><thead><tr><th></th><th>Level</th><th>Trap</th><th>Damage rule</th><th>D<sub>max</sub></th></tr></thead><tbody>${levels}</tbody></table>` : ""}
     ${abil ? `<h3>Abilities</h3><table><thead><tr><th>Ability</th><th>Level</th><th>Cost</th><th>Effect</th></tr></thead><tbody>${abil}</tbody></table>` : ""}
     <h3>Composite score</h3><p>0.35 × out-of-sample skill + 0.25 × HP + 0.25 × traps falsified + 0.15 × efficiency (lift per credit).</p>
+    ${rules && rules.ruleset_version ? `<p class="muted small">Ruleset ${esc(rules.ruleset_version)}.</p>` : ""}
     <div class="dlg-buttons"><button class="btn gold" id="how-close">Close</button></div>`;
   dlg.showModal();
   $("how-close").onclick = () => dlg.close();

@@ -110,6 +110,8 @@ def test_claude_is_used_automatically_when_a_key_exists(client, monkeypatch):
 @pytest.fixture
 def quest_client(tmp_path, monkeypatch):
     monkeypatch.setattr(main, "QUESTS", tmp_path)
+    monkeypatch.setattr(main, "CHAMPIONS", tmp_path / "champions.json")
+    monkeypatch.setattr(main, "_quests", {})
     return TestClient(main.app)
 
 
@@ -189,3 +191,34 @@ def test_the_directors_console_over_http(quest_client):
 def test_a_recording_has_no_console(quest_client):
     qid = quest_client.post("/api/quests", json={"campaign": "A", "llm": False}).json()["quest_id"]
     assert quest_client.post(f"/api/quests/{qid}/chat", json={"mode": "ASK", "text": "hi"}).status_code == 409
+
+
+def test_too_many_live_expeditions_are_refused(quest_client, monkeypatch):
+    monkeypatch.setattr(main, "MAX_LIVE", 1)
+    first = quest_client.post("/api/quests", json={"campaign": "A", "llm": False, "interactive": True})
+    assert first.status_code == 200
+    second = quest_client.post("/api/quests", json={"campaign": "B", "llm": False})
+    assert second.status_code == 429 and "running" in second.json()["detail"]
+    qid = first.json()["quest_id"]
+    quest_client.post(f"/api/quests/{qid}/stop")
+    assert wait_for_quest(quest_client, qid, timeout=10)[-1]["action"] == "stopped"
+    assert quest_client.post("/api/quests", json={"replay": qid}).status_code == 200   # a replay costs nothing
+
+
+def test_a_challenger_round_over_http(quest_client):
+    assert quest_client.get("/api/champions").json()["tracks"] == {}
+    qid = quest_client.post("/api/quests", json={"campaign": "A", "llm": False, "challenger": True}).json()["quest_id"]
+    events = wait_for_quest(quest_client, qid)
+    update = next(e for e in events if e["action"] == "champion_update")["result"]
+    assert update["result"] == "NEW CHAMPION" and events[-1]["result"]["challenger"]["round"] == 1
+    track = quest_client.get("/api/champions").json()["tracks"]["A:alcohol"]
+    assert track["rounds"] == 1 and track["champion"]["hid"].startswith("H-")
+    assert [c["track"] for c in quest_client.get("/api/campaigns").json()][0] == "A:alcohol"
+
+
+def test_scroll_counts_are_bounded_and_old_endpoints_are_hidden(quest_client):
+    for n in (1, 7):
+        assert quest_client.post("/api/quests", json={"campaign": "A", "scrolls": n}).status_code == 422
+    paths = quest_client.get("/openapi.json").json()["paths"]
+    assert "/api/quests" in paths and "/api/champions" in paths
+    assert not any(p.startswith(("/api/runs", "/api/roster", "/api/theory")) for p in paths)

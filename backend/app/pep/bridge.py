@@ -20,7 +20,7 @@ import math
 from . import challenges as C
 from . import judge as J
 from . import rules
-from .world import HOLDOUT_END
+from .world import GENERATOR_VERSION, HOLDOUT_END
 
 CHOICES = ("cross", "evolve", "inconclusive")
 FIX_FOR_FALLEN = {"confounder": "BIAS_DETECTION", "chronolock": "TEMPORAL_GUARD", "chance": "PREREGISTER"}
@@ -135,13 +135,15 @@ def plan_for(a, ws: list[dict]) -> dict:
 
 
 def candidate(q):
-    """The claim CROSS would commit: the best validated scroll, else the most promising survivor."""
+    """The claim CROSS would commit: a validated scroll, else the most promising survivor. Scrolls on different
+    outcomes answer different questions, so the earliest track wins (the campaign's primary outcome first), then skill."""
     active = q._active()
     if not active:
         return None
     ss = lambda a: (a.m.get(4, {}).get("ss_oos") if a.m.get(4, {}).get("ss_oos") is not None else -9)
+    track = {o.key: i for i, o in enumerate(q.c.outcomes)}
     good = [a for a in active if a.eureka]
-    return max(good or active, key=lambda a: (ss(a), a.hp))
+    return max(good or active, key=lambda a: (-track[a.st.outcome], ss(a), a.hp))
 
 
 def review(q, a) -> dict:
@@ -344,7 +346,11 @@ def trial(q, A: dict, choice: str) -> None:
             "design": a.st.design, "adjusted": a.st.adjusted, "K": a.st.K, "ablated": a.st.ablated,
             "beta": round(beta, 6), "rate_ratio": round(math.exp(beta), 4), "stance": stance,
             "evaluation": "1:1 propensity-matched new users in the second vault (index day >= %d); SS_oos > %.3f and paired "
-                          "loss p < %.2f" % (HOLDOUT_END, rules.SS_MARGIN, rules.ALPHA)}
+                          "loss p < %.2f" % (HOLDOUT_END, rules.SS_MARGIN, rules.ALPHA),
+            "ruleset_version": rules.RULESET_VERSION,
+            # the exact patients the vault holds, committed to before it is opened
+            "dataset": {"generator": GENERATOR_VERSION, "campaign": q.c.id, "seed": q.seed,
+                        "vault": f"index day >= {HOLDOUT_END}", "vault2_sha256": q.w.fingerprints["vault2"]}}
     digest = _hash(spec)
     q._emit(actor="system", action="spec_locked", agent=a,
             line=f"The research specification is locked ({digest[:12]}). The second vault opens for the first time.",
@@ -352,7 +358,9 @@ def trial(q, A: dict, choice: str) -> None:
     if q.vault_opened is not None:
         raise RuntimeError("the second vault was already opened")
     q.vault_opened = {"by": "trial", "spec": digest}
-    g = J.guardian(q.w, a.st.outcome, beta, "train", "vault2")
+    if "S-VAULT2" in q.sources.items:
+        q.sources.items["S-VAULT2"].update(sealed=False, opened_by_spec=digest)
+    g = J.guardian(q.w, a.st.outcome, beta, test_mask=q.w.mask("vault2"))
     failures = []
     if spec["design"] == "ever":
         failures.append("Immortal time: exposure was credited before the first fill, so the claim used information from the future.")
@@ -375,7 +383,8 @@ def trial(q, A: dict, choice: str) -> None:
                 if not failures else " The design still had a validity flaw, which the qualified report must disclose.")
     q.trial = {"outcome": outcome, "stance": stance, "spec": spec, "sha256": digest, "gain": gain, "failures": failures,
                "skill": {k: g.get(k) for k in ("ss_oos", "p_dm", "matched_pairs", "loss_scroll", "loss_comparator", "lift_pct")},
-               "observed": g.get("observed"), "predicted": g.get("predicted"), "hp_delta": a.hp - before, "crossed": crossed,
+               "observed": g.get("observed"), "predicted": g.get("predicted"), "effect": g.get("effect"),
+               "science": g.get("science"), "hp_delta": a.hp - before, "crossed": crossed,
                "scroll": a.id, "name": a.name, "line": rules.TRIAL_OUTCOMES[outcome] + note, "evaluated": True}
     ob, pr = g.get("observed") or {}, g.get("predicted") or {}
     chart = None if g.get("no_overlap") else {

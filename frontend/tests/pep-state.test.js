@@ -104,3 +104,69 @@ test("the console's rows land in the chat and the mystery book", () => {
   assert.strictEqual(s.mysteries.M01.status, "offered");
   assert.strictEqual(filterEvents(s.events, { kind: "director" }).length, 3);
 });
+
+test("the Archivist's Ledger: every encounter names a registered method and registered sources", () => {
+  for (const L of ["A", "B", "C", "D"]) {
+    const events = load(L), s = replay(events);
+    assert.ok(s.sources.length >= 6 && Object.keys(s.methods).length >= 10, `${L}: sources registered`);
+    assert.ok(s.rulesetVersion && s.dataset && s.dataset.fingerprints.train, `${L}: commitments published at the start`);
+    const known = new Set(s.sources.map((x) => x.id));
+    for (const e of events.filter((x) => x.encounter)) {
+      const t = e.encounter;
+      assert.ok(s.methods[t.methodId], `${L} ${t.encounterId}: method ${t.methodId}`);
+      for (const id of t.sourceIds) assert.ok(known.has(id), `${L} ${t.encounterId}: source ${id}`);
+      assert.strictEqual(t.rulesetVersion, s.rulesetVersion);
+    }
+    const arc = s.finale.archive;
+    assert.ok(arc.check.complete, `${L}: ${arc.check.problems.join("; ")}`);
+    assert.strictEqual(arc.check.encounters, events.filter((x) => x.encounter).length);
+    assert.match(arc.sha256, /^[0-9a-f]{64}$/);
+    assert.deepStrictEqual(arc.fingerprints, s.dataset.fingerprints);
+  }
+});
+
+test("each question gets a scientific status, and champions never cross questions", () => {
+  for (const L of ["A", "B", "C", "D"]) {
+    const events = load(L), f = replay(events).finale;
+    assert.ok(f.tracks.length >= 1 && f.tracks.some((t) => t.primary));
+    for (const t of f.tracks) {
+      assert.ok(["SUPPORTED", "REFUTED", "INCONCLUSIVE", "NOT ASSESSED"].includes(t.science.status), `${L} ${t.outcome}`);
+      if (t.cite) assert.ok(findEncounter(events, t.cite), `${L} ${t.cite}`);
+      if (t.champion) assert.strictEqual(f.ranking.find((r) => r.id === t.champion).track, t.outcome);
+    }
+    for (const r of f.ranking) assert.ok(f.tracks.some((t) => t.outcome === r.track), `${L} ${r.id} has a track`);
+  }
+  assert.strictEqual(replay(load("A")).finale.tracks[0].science.status, "SUPPORTED");
+  assert.strictEqual(replay(load("B")).finale.tracks[0].science.status, "REFUTED");
+});
+
+test("sources, Challenger rounds and timeouts fold into the state", () => {
+  const s = initial();
+  reduce(s, { seq: 1, action: "sources_registered", result: { sources: [{ id: "S-TRAIN", type: "SIMULATED" }], methods: { M: "m" } } });
+  reduce(s, { seq: 2, action: "source_registered", result: { source: { id: "S-X01", type: "USER_UPLOADED", usage: "CONTEXT" } } });
+  reduce(s, { seq: 3, action: "source_registered", result: { source: { id: "S-X01", type: "USER_UPLOADED", usage: "EXCLUDED" } } });
+  assert.deepStrictEqual(s.sources.map((x) => x.id), ["S-TRAIN", "S-X01"]);
+  assert.strictEqual(s.sources[1].usage, "EXCLUDED");
+  reduce(s, { seq: 4, action: "challenger_roster", result: { round: 2, incumbent: { hid: "H-1" }, challengers: ["pioneer"] } });
+  reduce(s, { seq: 5, action: "recruit", result: { agent: { id: "champion", name: "C", archetype: "PIONEER", hp: 100, credits: 100,
+                                                            track: "alcohol", champion: { hid: "H-1", defended: 0 } } } });
+  assert.strictEqual(s.challenger.round, 2);
+  assert.strictEqual(s.agents.champion.champion.hid, "H-1");
+  assert.strictEqual(s.agents.champion.track, "alcohol");
+  reduce(s, { seq: 6, action: "champion_update", result: { result: "CHAMPION DEFENDED", winner: "champion" } });
+  assert.strictEqual(s.championUpdate.result, "CHAMPION DEFENDED");
+  reduce(s, { seq: 7, action: "timeout", line: "Nobody watched." });
+  assert.ok(s.stopped && s.timedOut);
+  assert.ok(beat({ action: "challenger_roster" }) > 0 && beat({ action: "source_registered" }) === 0);
+});
+
+test("a repeated test changes nothing", () => {
+  const s = initial();
+  reduce(s, { seq: 1, action: "recruit", result: { agent: { id: "p", name: "P", archetype: "PIONEER", hp: 100, credits: 100 } } });
+  reduce(s, { seq: 2, action: "mystery_result", agent_id: "p", hp: 90, hp_delta: -10, result: { outcome: "FALLEN", mystery: { id: "M01", status: "fallen" } } });
+  reduce(s, { seq: 3, action: "mystery_result", agent_id: "p", hp: 90, hp_delta: 0,
+              result: { outcome: "REPEAT", mystery: { id: "M02", status: "repeat", repeat_of: "M01" } } });
+  assert.strictEqual(s.agents.p.hp, 90);
+  assert.strictEqual(s.adjust.length, 1);
+  assert.strictEqual(s.mysteries.M02.repeat_of, "M01");
+});

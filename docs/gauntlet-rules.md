@@ -1,16 +1,16 @@
 # Hypothesis Gauntlet: Peptide & GLP-1 Discovery, the rules
 
-One hero, **the Alchemist-Epidemiologist**, carries three **hypothesis scrolls** about peptides and
-GLP-1 drugs through four levels of evidence. Every enemy is one deterministic measurement by the
+One hero, **the Alchemist-Epidemiologist**, carries **hypothesis scrolls** about peptides and GLP-1 drugs
+(the three hand-written ones, or 2 to 6 formed by the Scribe) through four levels of evidence. Every enemy is one deterministic measurement by the
 **Statistical Judge**; every HP change is one rule below applied to that measurement. The numbers live
 in `backend/app/pep/rules.py` and `backend/app/pep/judge.py`. Nothing here is decided by an LLM.
 
-**Every campaign is simulated.** PubMed, Europe PMC, ClinicalTrials.gov, OpenFDA, Reddit and YouTube
-are not reachable from the build environment, and EHR data is never public, so each campaign is a
-deterministic synthetic world (`backend/app/pep/world.py`) with planted, known effects: an EHR cohort
-across five sites (three urban, two rural), and for each scroll a social corpus, a literature base and a
-trial registry. The brief reveals the planted truth so you can check the Judge. Nothing is a real
-finding or medical advice.
+**Every campaign's patients are simulated.** EHR data is never public, so each campaign is a deterministic
+synthetic world (`backend/app/pep/world.py`) with planted, known effects: an EHR cohort across five sites (three
+urban, two rural), a social corpus, and for the hand-written scrolls a simulated literature base and trial
+registry. Scrolls formed by the Scribe copy their papers and completed-RCT counts from the real
+`data/pep_evidence.duckdb` (Europe PMC, ClinicalTrials.gov) when it exists. The brief reveals the planted truth so
+you can check the Judge. Nothing is a real finding or medical advice.
 
 ## The four campaigns
 
@@ -22,7 +22,12 @@ finding or medical advice.
 | D | The Ozempic Blindness Scare | GLP-1 agonists vs SGLT2 inhibitors | NAION hazard ratio 1.5 on a 0.4% yearly base rate (not seven-fold); sicker diabetics get GLP-1s. Too rare to confirm in this cohort. |
 
 Index dates span 1,800 days, split by calendar time: days 0 to 1,099 train, days 1,100 to 1,449 are the
-vaulted Level IV holdout, and later days are a second vault kept unexposed for a future Evolution Trial.
+vaulted Level IV holdout, and later days are a second vault opened once, by the Trial of Truth.
+
+**Point-in-time training.** Training is what was knowable on day 1,100. Every training row's follow-up is cut at
+the cutoff (`min(365, 1100 − index day)` days of person-time, events after the cutoff not counted), and the risk
+models (propensity and comparator) are fit only on patients whose whole year ended by the cutoff. The Chronolock
+Assassin checks both: no training row starts or ends after day 1,100.
 
 ## The hero, the scrolls and the Gatekeeper
 
@@ -38,6 +43,12 @@ benchmark in the Citadel: the matched active comparator with **no drug effect**.
 The hero only chooses abilities for each scroll. Scripted plans by default; with `ANTHROPIC_API_KEY` in
 `.env`, Claude plays the Alchemist and returns a JSON choice per scroll, validated against the menu and
 that scroll's credits (anything invalid falls back to the script).
+
+**The Scribe** (`hypotheses.py`) forms 2 to 6 scrolls when a quest asks for `scrolls: N`. It writes words only
+(title, claim, origin, outcome, topic, archetype), never a number. No two scrolls share a structure (outcome and
+archetype); Claude's duplicates and claims containing numbers are rejected and the script fills the slots, in the
+order Mechanistic, Pilot (preprint), Viral (hype), each across the outcomes. Titles name the outcome: "The Pilot
+Re-Injury Scroll".
 
 ## Resources and the clamp
 
@@ -74,9 +85,32 @@ that scroll's credits (anything invalid falls back to the script).
   **SHATTERED**: 0 HP. **BASELINE**: the Gatekeeper's benchmark.
 - Composite score = 0.35 × Norm(SS) + 0.25 × HP + 0.25 × % traps falsified + 0.15 × efficiency,
   Norm = 100 × clamp(SS / 0.02, 0, 1), efficiency = min(100, 100 × lift % / max(1, credits spent / 10)).
-- The champion is the highest-scoring VALIDATED scroll; if none, **Baseline Holds: inconclusive**.
+- **One champion per outcome track.** Scrolls about different outcomes answer different questions, so they are
+  never ranked against each other. Each outcome's champion is its highest-scoring VALIDATED scroll; the brief's
+  champion is the primary outcome's, else the first outcome (in campaign order) that has one. If none:
+  **Baseline Holds**.
 - The Research Decision Brief cites every claim to its encounter id (`E###`). A validated benefit
-  becomes "prioritise a confirmatory randomised trial"; a validated harm becomes a safety signal.
+  becomes "prioritise a confirmatory randomised trial"; a validated harm becomes a safety signal. The decision
+  also states each question's scientific status, so "the baseline holds for prediction" is never read as "the drug
+  does nothing".
+
+## Scientific status: prediction and causation are judged separately
+
+The verdict asks whether a scroll **predicts** unseen patients better than the comparator. The Guardian also asks
+whether the drug **changes the risk** at all, on the same 1:1 matched holdout patients: the matched risk ratio,
+standardised to the comparator model's expected risks (`RR = (O_t/E_t) / (O_c/E_c)`, which removes the imbalance
+left inside the caliper). The 95% interval is exact conditional (Clopper-Pearson on the treated share of events)
+when the comparator risk is below 5% or an arm has fewer than 5 events, and a Wald log-RR interval otherwise. The
+smallest effect of interest (`rules.SESOI`) is RR 0.80 for a claimed benefit and 1.25 for a claimed harm.
+
+| Status | When |
+|---|---|
+| SUPPORTED | The interval excludes 1 in the claimed direction (flagged if it also excludes the effect of interest) |
+| REFUTED | The interval excludes the smallest effect of interest |
+| INCONCLUSIVE | The interval includes both no effect and an effect that would matter |
+| NOT ASSESSED | No matched users and comparators with events |
+
+Every status also reports the detectable effect: the smallest risk ratio these patients would find with 80% power.
 
 ## Telemetry
 
@@ -85,7 +119,30 @@ Every fight writes one ledger row (`data/quests/*.jsonl`) carrying a `PepEncount
 `biostatMetrics {affiliateSkew, effectiveSources, rodentShare, naiveRateRatio, adjustedRateRatio,
 confoundingShift, testsSearchedK, rawPValue, sidakCorrectedPValue, labConcentration, completedHumanRcts,
 immortalTimeShare, purgeShift, outOfSampleSkill, pairedLossPValue, design}` and
-`combatResolution {rawDamage, abilityMultiplier, clampedHpDelta, executedFormulaLatex, plainEnglishVerdict}`.
+`combatResolution {rawDamage, abilityMultiplier, clampedHpDelta, executedFormulaLatex, plainEnglishVerdict}`,
+and the Archivist's trace: `methodId`, `sourceIds` and `rulesetVersion` (`rules.RULESET_VERSION`, bumped on any
+rule change).
+
+## The Archivist's Ledger: every number traces to a method and its sources
+
+`backend/app/pep/sources.py` registers, at the start of every quest, each source a number can come from:
+
+| Type | What it is |
+|---|---|
+| SIMULATED | The cohort's partitions (`S-TRAIN`, `S-HOLDOUT`, `S-VAULT2`), the social corpus, simulated literature |
+| REAL_METADATA | Papers and completed-RCT counts copied from `data/pep_evidence.duckdb` (`S-LIT-<scroll>`, `S-RCT-<scroll>`) |
+| USER_UPLOADED | A file the Director attached, with its SHA-256 |
+| DIRECTOR_STATEMENT | A link or a claim the Director typed: kept, never treated as fact |
+| DERIVED | Computed by the Judge from other sources |
+| PRIOR_ROUND | A champion's frozen claim from an earlier Challenger round |
+
+Each source may be read by a test (NUMERIC_TEST), shown as context only (CONTEXT), or EXCLUDED. Every encounter
+names its method (`sources.METHODS`, such as `M-L4-GUARDIAN`) and the sources it read. The first ledger row
+publishes a SHA-256 of each cohort partition before anything is measured. The finale writes a manifest (run id,
+seed, ruleset, generator, fingerprints, sources, methods, the trace of every encounter, the trial) with its own
+SHA-256, and checks it is complete: every encounter names a known method and only registered sources, and every
+citation in the brief points at a traced encounter. The brief's **Archivist's Ledger** tab shows it and downloads
+the manifest as JSON.
 
 ## The Research Director's console (CHALLENGE THE HERO)
 
@@ -96,14 +153,16 @@ Hero** (or the `C` key). Code: `backend/app/pep/director.py`, `evidence.py`, `ch
 
 | Mode | What happens |
 |---|---|
+| Boss chips | Seven chips, one per Mystery Boss below: one click names the registered test and summons it on the selected scroll. |
 | Ask | The hero explains its choices and the Judge's numbers from the ledger. Never creates an enemy. |
 | Challenge / Summon | The QuestionRouter maps the text to one registered challenge. If it maps, a Mystery Encounter is offered (summon now, save for later, explain, cancel). If not, it is kept as an unresolved challenge. |
 | Add evidence | Intake, verification, classification (below). A relevant, testable weakness becomes a Mystery Encounter; a valid CSV opens a Secret Research Level. |
 | New hypothesis | A named confounder becomes a Confounder Shapeshifter; another campaign outcome must first survive the Probability Phantom; anything else is an unresolved quest. |
 
 **Evidence verification.** Each submission is recorded (claim, link or file, time, research question, target
-scroll, level, source type) and checked: can it be retrieved (http/https only, public addresses only, no redirects,
-1 MB, 6 s), who published it and when (HTML meta tags, read by regular expression, never rendered or run), does the
+scroll, level, source type) and registered with the Archivist, then checked: can it be retrieved (http/https only,
+no user name or password in the link, the host resolved once and every address public, the connection pinned to the
+address that was checked, no redirects, text, HTML, CSV, Markdown or JSON only, 1 MB, 3 s for the whole fetch), who published it and when (HTML meta tags, read by regular expression, never rendered or run), does the
 page contain the claim, is it relevant to the campaign. Classes: VERIFIED AND TESTABLE, VERIFIED BUT NOT DIRECTLY
 TESTABLE, UNVERIFIED, IRRELEVANT, INVALID OR INCOMPATIBLE DATA, REQUIRES ADDITIONAL EVIDENCE. Social media ranks below
 preprints, below journals, registries and agencies. A verified source does not make its claim true, and an
@@ -124,6 +183,10 @@ the build container blocks most outbound hosts, so links normally end UNVERIFIED
 | Confounder Shapeshifter | Another variable? | Adjust for the named (or every) confounder | adjusted p < .05; an unmeasured variable ends Unresolved |
 
 HP (research integrity, `rules.MYSTERY_HP`): survived +3, fallen −10, fallen through leakage −15, unresolved 0.
+**No farming:** a test is identified by its target, boss, outcome, options and the scroll's design as it stands.
+Summoning the identical test again is a REPEAT: it is not run, and changes 0 HP. A boss family that already
+rewarded a scroll earns it nothing more (survived again, 0). The ledger counts how many tests looked at each
+scroll's training data.
 A Secret Research Level (from a CSV) has two measuring obstacles (Schema Golem, Fisher's exact test) and the
 Replication Revenant: a heterogeneity z-test between the new data's risk ratio and the hero's training estimate.
 
@@ -146,6 +209,23 @@ VALIDATED DISCOVERY (asserted and gained, +10), JUSTIFIED UNCERTAINTY (qualified
 says), UNJUSTIFIED CONFIDENCE (asserted, no gain, −60), INVALID METHODOLOGY (asserted with immortal time, claim
 rejected, HP to 0). Honest uncertainty is never punished; HP never decides validity. Without a Director (CLI, the
 recorded demos) the hero follows its own recommendation.
+
+## Challenger Mode: a title defended on fresh patients
+
+Each campaign's primary question is a title track (`A:alcohol`), kept in `data/champions.json` (`champions.py`).
+One Challenger round is one quest on a fresh simulated cohort (the round number is the seed). The reigning
+champion is carried in with its words frozen and hashed; the Scribe forms challengers that differ from it in
+outcome or archetype. To win, a scroll must be on the track's question, standing, time-zero, VALIDATED, with
+scientific status SUPPORTED or INCONCLUSIVE, and not rejected at the Trial of Truth. A challenger takes the title
+only by beating the incumbent (SUPPORTED beats INCONCLUSIVE, else holdout skill by more than 0.002); a tie keeps
+it. Results: NEW CHAMPION, CHAMPION DEFENDED, TIE - INCUMBENT RETAINED, NO ELIGIBLE CHAMPION, NOT APPLIED (another
+round settled the track meanwhile). The registry is written atomically, once per run, and only if its revision is
+unchanged. `GET /api/champions` lists every track.
+
+## Lifecycle
+
+At most four live expeditions run at once; a fifth is refused (HTTP 429) until one ends. An expedition nobody polls
+or acts on for 120 seconds stops itself and writes a `timeout` row. Replays cost nothing and are not counted.
 
 ## Simulated or not built
 

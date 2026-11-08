@@ -30,7 +30,11 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 
 ## The Gauntlet (Peptide & GLP-1 Edition): rules for editing backend/app/pep
 - The hero (agents.py) only chooses abilities for each scroll. Only judge.py measures; only campaign.py applies the damage rules in rules.py; report.py only copies measured numbers.
-- The Scribe (hypotheses.py) only writes the words of 1-6 scrolls (title, claim, origin, outcome, topic, archetype) when a quest asks for `scrolls: N`; it never writes numbers. Each scroll's papers and completed-RCT count are copied from the REAL `data/pep_evidence.duckdb`; without `scrolls`, the three hand-written scrolls are used.
+- The Scribe (hypotheses.py) only writes the words of 2-6 scrolls (title, claim, origin, outcome, topic, archetype) when a quest asks for `scrolls: N`; it never writes numbers, and no two scrolls share an (outcome, archetype) structure. Each scroll's papers and completed-RCT count are copied from the REAL `data/pep_evidence.duckdb`; without `scrolls`, the three hand-written scrolls are used.
 - The patient cohort and social corpus are still a simulated world (world.py) with planted truths: never present results as real findings or medical advice.
-- The "vault2" split (index day >= 1450) is reserved for a future Evolution Trial: never read it in levels I to IV.
+- The "vault2" split (index day >= 1450) is opened once, by the Trial of Truth (bridge.py): never read it in levels I to IV.
+- Point-in-time training: anything fit or measured on the training years uses `cutoff=TRAIN_END` (world.rows / world.new_user), so no follow-up after day 1100 is ever read.
+- The Guardian reports prediction (SS_oos, the verdict) and causation (the matched risk ratio's scientific status, judge.science_status) separately; champions are per outcome track, never across outcomes.
+- Every encounter carries methodId, sourceIds and rulesetVersion (sources.py); a new enemy or test needs an entry in sources.METHODS / ENEMY_TRACE, and any rule change bumps rules.RULESET_VERSION.
+- Challenger Mode keeps its registry in `data/champions.json` (gitignored, written only by champions.py: atomically, once per run, revision-checked).
 - After changing the engine, re-record the demos: .venv/bin/python scripts/run_pep.py all --out frontend/src/demo --quiet

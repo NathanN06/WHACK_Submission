@@ -487,3 +487,65 @@ body.reduced *, body.reduced *::before, body.reduced *::after, body.reduced dial
 #bridge-banner.v-fall strong, #bridge-banner.v-escape strong { color: #ff8a9a; }
 .trial-card { animation: dlg-in .5s cubic-bezier(.2, .9, .3, 1.15) both; }
 .room-headline { animation: dlg-in .6s cubic-bezier(.2, .9, .3, 1.15) .3s both; }
+
+/* ---------- Challenger Mode, the queue, the boss chips ---------- */
+.champ-line { margin: 12px auto 0; max-width: 760px; padding: 6px 12px; font-size: 14px; color: var(--bone);
+  background: rgba(13, 11, 30, .6); box-shadow: inset 0 0 0 2px var(--purple); }
+.champ-line.on { box-shadow: inset 0 0 0 2px var(--gold); }
+.champ-line b { color: var(--gold); font-weight: 400; font-family: "Jersey 10", sans-serif; font-size: 17px; }
+.champ-line small { color: var(--muted); }
+.champ-badge { font-size: 11px; padding: 1px 5px; background: var(--gold); color: var(--navy); }
+.progress { margin-left: auto; align-self: center; color: var(--muted); font-size: 13px; white-space: nowrap; }
+.chips { margin: 0 0 10px; }
+.chips > small { display: block; color: var(--gold); font: 15px/1.2 "Jersey 10", sans-serif; letter-spacing: .5px; margin-bottom: 6px; }
+#chips { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 6px; }
+.chip { display: grid; grid-template-columns: 32px 1fr; align-items: center; gap: 6px; text-align: left; cursor: pointer; border: 0;
+  padding: 4px 6px; background: #1b1430; color: var(--bone); box-shadow: inset 0 0 0 2px var(--purple); font: 13px/1.1 "Pixelify Sans", sans-serif; }
+.chip:hover:not(:disabled) { box-shadow: inset 0 0 0 2px var(--gold); }
+.chip:disabled { opacity: .5; cursor: default; }
+.chip canvas { width: 32px; height: 27px; }
+.chip em { grid-column: 1 / -1; font-style: normal; font-size: 11px; color: var(--muted); }
+.chip.was-survived em { color: var(--heal); } .chip.was-fallen em { color: #ff8a9a; }
+
+/* ---------- the Inspector: science and the Archivist's trace ---------- */
+.science { margin: 8px 0; padding: 8px 10px; background: #15122b; box-shadow: inset 4px 0 0 #5a5070; }
+.science small { display: block; color: var(--muted); font-size: 12px; }
+.science strong { font: 20px/1 "Jersey 10", sans-serif; letter-spacing: .5px; }
+.science p { margin: 4px 0 0; font-size: 13px; }
+.science.s-SUPPORTED { box-shadow: inset 4px 0 0 var(--heal); } .science.s-SUPPORTED strong { color: var(--heal); }
+.science.s-REFUTED { box-shadow: inset 4px 0 0 var(--blood); } .science.s-REFUTED strong { color: #ff8a9a; }
+.science.s-INCONCLUSIVE { box-shadow: inset 4px 0 0 var(--gold); } .science.s-INCONCLUSIVE strong { color: var(--gold); }
+dl.insp.trace { margin-top: 8px; }
+.srcs { list-style: none; margin: 0; padding: 0; font-size: 12px; }
+.srcs li { margin: 2px 0; }
+.stype { font-size: 10px; padding: 1px 4px; background: #3a3848; color: var(--bone); letter-spacing: .03em; white-space: nowrap; }
+.stype.t-SIMULATED { background: #1f5a6a; } .stype.t-REAL_METADATA { background: #2f6a3a; }
+.stype.t-USER_UPLOADED, .stype.t-DIRECTOR_STATEMENT { background: #6a4a10; } .stype.t-PRIOR_ROUND { background: #6a3f8a; }
+
+/* ---------- the brief: tabs, tracks, the Challenger round, the Archivist's Ledger ---------- */
+.brief-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin: 16px 0 0; border-bottom: 2px solid #d8d2c4; }
+.brief-tabs .tab { border: 0; cursor: pointer; padding: 8px 12px; background: #ece6da; color: #3a4458; font: 15px/1.2 system-ui, sans-serif; }
+.brief-tabs .tab[aria-selected="true"] { background: #1d2433; color: #fff; }
+.sci-badge { display: inline-block; font: 12px/1 ui-monospace, Menlo, monospace; padding: 3px 6px; background: #e6e2ee; color: #3a3848; white-space: nowrap; }
+.sci-badge.t-ok { background: #d6f2de; color: #1d6a3e; } .sci-badge.t-bad { background: #f8d8de; color: #8a1a2a; }
+.sci-badge.t-warn { background: #fff0c4; color: #7a5200; }
+table.score td small { display: block; }
+table.score tr.track-row td { background: #eef2f7; color: #1d2433; font-size: 13px; border-top: 2px solid #d8d2c4; }
+table.tracks tr.why td { color: #5a6478; font-size: 12px; padding-top: 0; }
+table.tracks tr.primary td:first-child strong { color: #1d6a3e; }
+.challenger-card { margin: 16px 0; padding: 12px 16px; background: #fff; box-shadow: inset 6px 0 0 #6a3f8a, 0 0 0 1px #d8d2c4; }
+.challenger-card.r-NEW { box-shadow: inset 6px 0 0 #2f9a5a, 0 0 0 1px #d8d2c4; }
+.challenger-card.r-CHAMPION { box-shadow: inset 6px 0 0 #e8b847, 0 0 0 1px #d8d2c4; }
+.challenger-card small { text-transform: uppercase; letter-spacing: .08em; color: #5a6478; font-size: 12px; }
+.challenger-card h3 { margin: 2px 0 6px; }
+.trace-warn { background: #fde2e6; color: #8a1a2a; padding: 8px 12px; box-shadow: inset 0 0 0 2px #e0405f; margin: 0 0 14px; }
+.archivist .trace-check { padding: 8px 12px; margin: 14px 0; }
+.archivist .trace-check.ok { background: #e2f5e8; color: #1d6a3e; box-shadow: inset 0 0 0 2px #5fd67a; }
+.archivist .trace-check.bad { background: #fde2e6; color: #8a1a2a; box-shadow: inset 0 0 0 2px #e0405f; }
+.archivist table.nums th { color: #5a6478; }
+.archivist .methods { margin: 0; padding-left: 18px; font-size: 13px; }
+.archivist .methods li { margin: 3px 0; }
+.archivist code { word-break: break-all; }
+.brief .tag { background: #ece6da; color: #5a6478; }
+.archivist td:first-child code, .archivist td:nth-child(5) code { white-space: nowrap; word-break: normal; }
+.mcard.s-repeat { box-shadow: inset 0 0 0 2px #5a5070; } .mres.repeat { color: var(--muted); }

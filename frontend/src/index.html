@@ -24,15 +24,17 @@
       <h2>Choose a campaign</h2>
       <div class="cards" id="cards" role="radiogroup" aria-label="Campaign"></div>
       <div class="menu-row">
-        <label class="scroll-count" id="count-wrap" hidden title="How many hypothesis scrolls this campaign carries. A number: the Scribe forms that many from the real evidence database (Claude, when the toggle is on).">Hypotheses
-          <select id="count"><option value="">3, hand-written</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
+        <label class="scroll-count" id="count-wrap" hidden title="How many hypothesis scrolls this campaign carries. A number: the Scribe forms that many, no two alike, with papers and trials copied from the real evidence database (Claude writes the words when the toggle is on).">Hypotheses
+          <select id="count"><option value="">3, hand-written</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option></select></label>
         <label class="llm-toggle" id="llm-wrap" hidden><input type="checkbox" id="llm"> Claude plays the Alchemist</label>
+        <label class="llm-toggle" id="challenger-wrap" hidden title="One round of this campaign's title: a fresh simulated cohort, the reigning champion's frozen claim, and challengers that differ from it."><input type="checkbox" id="challenger"> Challenger round</label>
         <div class="menu-buttons">
           <button class="btn gold" id="begin">Begin the campaign</button>
           <button class="btn" id="demo">Watch the recorded run</button>
           <button class="btn ghost" id="how">How it works</button>
         </div>
       </div>
+      <div class="champ-line" id="champ-line" hidden></div>
       <p class="who" id="who">Checking the server…</p>
     </div>
   </section>
@@ -56,11 +58,11 @@
           <div class="secret-badge" id="secret-badge" hidden></div>
         </div>
 
-        <ol class="party" id="party" aria-label="The Alchemist and the three scrolls"></ol>
+        <ol class="party" id="party" aria-label="The Alchemist and the hypothesis scrolls"></ol>
 
         <section class="console frame" aria-label="Combat console">
           <div class="ticker" aria-live="polite">
-            <p class="tick-line" id="tick-line">The Alchemist gathers three scrolls at the gate.</p>
+            <p class="tick-line" id="tick-line">The Alchemist gathers the scrolls at the gate.</p>
             <p class="tick-explain" id="tick-explain"></p>
           </div>
           <div class="controls" role="group" aria-label="Playback">
@@ -73,6 +75,7 @@
             <button class="btn small ghost" id="motion" aria-pressed="false" title="Turn off shaking, flashes and lunges">Reduce motion</button>
             <button class="btn small ghost" id="tutorial-btn">Tutorial</button>
             <button class="btn small ghost" id="exit" title="Stop this campaign and go back to the selector">Exit</button>
+            <small class="progress" id="progress" aria-live="off"></small>
           </div>
         </section>
       </div>
@@ -134,6 +137,10 @@
     </header>
     <ol class="chat-log" id="chat-log" aria-live="polite"></ol>
     <div class="chat-offer" id="chat-offer" hidden></div>
+    <div class="chips" id="chat-chips" role="group" aria-label="Put a registered test to the scroll" hidden>
+      <small>Summon a boss: each one is a registered test the Judge runs on the training years</small>
+      <div id="chips"></div>
+    </div>
     <form class="chat-form" id="chat-form">
       <div class="modes" role="radiogroup" aria-label="Interaction mode">
         <button type="button" class="btn small mode" data-mode="ASK" aria-pressed="true" title="Ask the hero to explain its reasoning">Ask</button>

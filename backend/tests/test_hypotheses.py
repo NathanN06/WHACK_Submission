@@ -31,14 +31,31 @@ def fake_db(path):
     return path
 
 
-def test_scripted_scribe_forms_any_count_up_to_the_cap(tmp_path):
-    c = BY_LETTER["A"]
-    for n in (1, 3, 5, 6, 9):
-        scrolls, info = H.form(c, n, db_path=tmp_path / "missing.duckdb")
-        assert len(scrolls) == min(n, H.MAX_SCROLLS) == info["count"]
-        assert len({s.key for s in scrolls}) == len(scrolls)
-        assert info["source"] == "script" and info["evidence"] == "simulated"
-    assert [s.claim for s in H.form(c, 3, db_path=tmp_path / "x")[0]] == [s.claim for s in c.scrolls]
+def test_scripted_scribe_forms_two_to_six_scrolls_without_duplicates(tmp_path):
+    for c in BY_LETTER.values():
+        for n in (1, 2, 3, 5, 6, 9):
+            scrolls, info = H.form(c, n, db_path=tmp_path / "missing.duckdb")
+            assert len(scrolls) == max(H.MIN_SCROLLS, min(n, H.MAX_SCROLLS)) == info["count"]
+            assert len({s.key for s in scrolls}) == len(scrolls)
+            assert len({(s.outcome, s.archetype) for s in scrolls}) == len(scrolls)   # no structural duplicate
+            assert len({s.title for s in scrolls}) == len(scrolls)
+            assert info["source"] == "script" and info["evidence"] == "simulated"
+        assert [s.claim for s in H.form(c, 3, db_path=tmp_path / "x")[0]] == [s.claim for s in c.scrolls]
+    six = H.form(BY_LETTER["D"], 6, db_path=tmp_path / "x")[0]
+    assert "The Retinopathy Scroll" in [s.title for s in six] and not any("Naion" in s.title for s in six)
+
+
+def test_claude_duplicates_are_rejected_and_excluded_structures_avoided(tmp_path):
+    good = {"title": "Semaglutide cuts alcohol relapse", "claim": "Semaglutide lowers alcohol relapse versus DPP-4 inhibitors.",
+            "outcome": "alcohol", "topic": "alcohol", "archetype": "PIONEER", "origin": "addiction psychiatry reviews"}
+    twin = {**good, "title": "Same structure again"}
+    taken = {**good, "outcome": "opioid", "archetype": "HYPE", "title": "Opioid hype"}
+    reply = json.dumps({"hypotheses": [good, twin, taken]})
+    scrolls, info = H.form(BY_LETTER["A"], 4, lambda system, user: reply, db_path=tmp_path / "x",
+                           exclude={("opioid", "HYPE")})
+    shapes = [(s.outcome, s.archetype) for s in scrolls]
+    assert info["duplicates_rejected"] == 2 and len(set(shapes)) == len(shapes) == 4
+    assert ("opioid", "HYPE") not in shapes and scrolls[0].title == good["title"]
 
 
 def test_real_papers_and_trials_are_copied_into_the_scroll(tmp_path):

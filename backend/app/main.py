@@ -21,6 +21,7 @@ from .pep import rules as pep_rules
 from .pep.agents import make_hero
 from .pep.campaign import PepQuest
 from .pep.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS, HERO
+from .pep.director import DirectorError, Expedition
 from .pep.models import QuestEvent
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -161,6 +162,7 @@ class QuestRequest(BaseModel):
     replay: str | None = None
     pace: float = Field(0.0, ge=0, le=5)
     seed: int = 0
+    interactive: bool = False  # True: the quest waits for the screen and the Research Director's console is open
 
 
 def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
@@ -190,6 +192,8 @@ def start_quest(req: QuestRequest):
         cid = _campaign_id(req.campaign)
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
         quest = PepQuest(quest_id, cid, ledger, make_hero(_use_llm(req.llm)), seed=req.seed, pace=req.pace)
+        if req.interactive:
+            Expedition(quest)
         thread = threading.Thread(target=quest.run, daemon=True)
     thread.start()
     _quests[quest_id] = {"ledger": ledger, "thread": thread, "quest": quest}
@@ -225,6 +229,90 @@ def quest_events(quest_id: str, after: int = 0):
             raise HTTPException(404, "unknown quest")
         events, done = load(path, QuestEvent)[after:], True
     return {"events": [e.model_dump() for e in events], "done": done}
+
+
+# ---------- the Research Director's console (director.py, bridge.py) ----------
+
+
+class Upload(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    content_b64: str = Field(max_length=1_400_000)  # about 1 MB once decoded
+
+
+class ChatRequest(BaseModel):
+    mode: Literal["ASK", "CHALLENGE", "ADD_EVIDENCE", "NEW_HYPOTHESIS", "SUMMON"] = "ASK"
+    text: str = Field("", max_length=2000)
+    url: str | None = Field(None, max_length=500)
+    file: Upload | None = None
+    level: int | None = Field(None, ge=1, le=5)
+    target: str | None = Field(None, max_length=40)
+    request_id: str | None = Field(None, max_length=80)
+
+
+class MysteryRequest(BaseModel):
+    action: Literal["summon", "save", "explain", "cancel"]
+    level: int | None = Field(None, ge=1, le=5)
+    request_id: str | None = Field(None, max_length=80)
+
+
+class AdvanceRequest(BaseModel):
+    level: int = Field(ge=0, le=5)
+
+
+class BridgeRequest(BaseModel):
+    choice: Literal["cross", "evolve", "inconclusive"]
+    request_id: str | None = Field(None, max_length=80)
+
+
+def _director(quest_id: str) -> Expedition:
+    entry = _quests.get(quest_id)
+    quest = entry and entry.get("quest")
+    if quest is None or quest.director is None:
+        raise HTTPException(409, "This quest has no Research Director's console (it is a recording or was started without one).")
+    if not entry["thread"].is_alive():
+        raise HTTPException(409, "This expedition has ended.")
+    return quest.director
+
+
+def _call(fn):
+    from .pep.campaign import QuestStopped
+    try:
+        return fn()
+    except DirectorError as e:
+        raise HTTPException(409, str(e)) from e
+    except QuestStopped as e:
+        raise HTTPException(409, "This expedition was stopped.") from e
+
+
+@app.post("/api/quests/{quest_id}/advance")
+def advance_quest(quest_id: str, req: AdvanceRequest):
+    """The screen has finished showing this level: the quest may compute the next one."""
+    return _director(quest_id).advance(req.level)
+
+
+@app.post("/api/quests/{quest_id}/chat")
+def quest_chat(quest_id: str, req: ChatRequest):
+    """CHALLENGE THE HERO: ask, challenge, add evidence, propose a hypothesis or summon a Mystery Boss."""
+    d = _director(quest_id)
+    return _call(lambda: d.chat(req.model_dump()))
+
+
+@app.post("/api/quests/{quest_id}/mystery/{mystery_id}")
+def quest_mystery(quest_id: str, mystery_id: str, req: MysteryRequest):
+    d = _director(quest_id)
+    return _call(lambda: d.mystery(mystery_id, req.action, req.request_id, req.level))
+
+
+@app.post("/api/quests/{quest_id}/bridge")
+def quest_bridge(quest_id: str, req: BridgeRequest):
+    """The Research Director's choice at the Bridge of Judgment. The hero designs; the Judge decides."""
+    d = _director(quest_id)
+    return _call(lambda: d.choose(req.choice, req.request_id))
+
+
+@app.get("/api/quests/{quest_id}/director")
+def quest_director(quest_id: str):
+    return _director(quest_id).summary()
 
 
 @app.get("/api/campaigns")

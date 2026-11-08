@@ -12,7 +12,7 @@ class QuestEvent(BaseModel):
     seq: int
     ts: float
     level: int | None = None
-    actor: Literal["agent", "judge", "system"]
+    actor: Literal["agent", "judge", "system", "director"]   # director: the user, as Research Director
     action: str
     agent_id: str | None = None
     agent: dict[str, Any] | None = None

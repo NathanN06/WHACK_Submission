@@ -122,3 +122,50 @@ VERDICTS = {
     "BASELINE": "The Gatekeeper's benchmark: the matched active comparator with no drug effect.",
     "SHATTERED": "The scroll's research integrity reached 0 HP.",
 }
+
+
+# ---------- The Research Director's console: Mystery Bosses, the Bridge of Judgment, the Trial of Truth ----------
+# HP is research integrity, not the probability that a claim is true. These rules reward honest, meaningful
+# extra tests and punish asserting a claim the evidence does not support. Fixed before any run.
+
+MYSTERY_D_MAX = 15          # a Mystery Boss never takes more than this from a scroll
+MYSTERY_HP = {
+    "SURVIVED": +3,         # ran a meaningful additional test and the claim held: a modest reward
+    "FALLEN": -10,          # the test exposed a real weakness the scroll had not guarded against
+    "FALLEN_LEAKAGE": -15,  # the weakness was future information (the gravest methodological flaw)
+    "UNRESOLVED": 0,        # no valid test could be run: nothing is decided, nothing is lost
+}
+MYSTERY_TEST_COST = 10      # credits a focused re-test costs during the Evolution Trial
+PERMUTATIONS = 199          # label shuffles for the Probability Phantom
+SECRET_MIN_ROWS = 40        # a user dataset smaller than this cannot open a Secret Research Level
+UPLOAD_MAX_BYTES = 1_000_000
+UPLOAD_MAX_ROWS = 20_000
+
+# Each weakness the hero can find in the claim it would submit: how serious it is, and what fixes it.
+WEAKNESSES = {
+    "leakage": {"label": "Possible leakage: immortal time (future information) in the exposure definition",
+                "severity": 3, "fix": "TEMPORAL_GUARD"},
+    "confounding": {"label": "Measured confounders not adjusted for", "severity": 2, "fix": "BIAS_DETECTION"},
+    "search": {"label": "Significance may come from searching many outcomes and subgroups", "severity": 2,
+               "fix": "PREREGISTER"},
+    "generalisation": {"label": "The effect has not replicated in most sites", "severity": 1, "fix": "REPLICATION_SHIELD"},
+    "no_rct": {"label": "No completed human randomised trial", "severity": 1, "fix": None},
+    "holdout": {"label": "Did not beat the comparator on the vaulted holdout", "severity": 2, "fix": None},
+}
+USER_RAISED_BONUS = 1       # an unresolved challenge the Research Director raised weighs one point more
+EVOLVE_THRESHOLD = 3        # evolve only if the fixable weaknesses the credits can pay for weigh at least this
+EVOLUTION_BASE_COST = 5     # the focused second expedition itself
+EVOLUTION_FIX_HEAL = 3      # each weakness V2 genuinely fixes: a modest reward
+
+TRIAL_HP = {
+    "VALIDATED DISCOVERY": +10,
+    "JUSTIFIED UNCERTAINTY": 0,
+    "UNJUSTIFIED CONFIDENCE": -60,
+    "INVALID METHODOLOGY": -100,
+}
+TRIAL_OUTCOMES = {
+    "VALIDATED DISCOVERY": "The locked claim beat the comparator on the protected vault, on a valid design. The hero crosses.",
+    "JUSTIFIED UNCERTAINTY": "The hero presented qualified findings and did not assert more than the evidence allows. The hero crosses with a qualified report.",
+    "UNJUSTIFIED CONFIDENCE": "The hero asserted a claim the protected vault does not support. The bridge cracks beneath it.",
+    "INVALID METHODOLOGY": "The final audit found a predefined validity failure in the asserted claim. The bridge collapses and the claim is rejected.",
+}

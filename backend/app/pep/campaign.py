@@ -8,13 +8,14 @@ PepEncounterTelemetry record, goes to the append-only ledger the screen plays ba
 from __future__ import annotations
 
 import math
+import threading
 import time
 from dataclasses import dataclass, field
 
 import numpy as np
 
 from . import judge as J
-from . import report, rules
+from . import bridge, report, rules
 from .agents import Decision, ScriptedHero, menu_for
 from .campaigns import ARCHETYPES, CAMPAIGNS, HERO
 from .world import COVARIATE_LABELS, HOLDOUT_END, SITES, TRAIN_END, Scroll, World
@@ -83,15 +84,27 @@ class PepQuest:
         self._enc = 0
         self._stop = False
         self.baseline: dict | None = None
+        # The Research Director's console and the endgame (director.py, bridge.py)
+        self.lock = threading.RLock()     # a level, a Mystery Boss or the endgame computes one at a time
+        self.director = None              # an Expedition, when someone is watching and may intervene
+        self.evolved = False
+        self.versions: dict = {}
+        self.vault_opened: dict | None = None   # the second vault: opened once, by the Trial of Truth
+        self.trial: dict | None = None
+        self.bridge_log: list = []
 
     # ---------- the whole run ----------
 
     def run(self) -> dict | None:
         try:
-            self.start()
+            with self.lock:
+                self.start()
             for level in (1, 2, 3, 4):
-                self.play_level(level)
-            return self.finale()
+                with self.lock:
+                    self.play_level(level)
+                if self.director is not None:
+                    self.director.checkpoint(level)  # wait until the screen has shown this level
+            return bridge.endgame(self)
         except QuestStopped:
             self.ledger.write(level=self.level, actor="system", action="stopped",
                               line="The Research Director left the gauntlet, so the expedition was stopped.")
@@ -490,6 +503,9 @@ class PepQuest:
     def finale(self) -> dict:
         self.level = 5
         result = report.finale(self)
+        if self.trial is not None:
+            result["overworld"] = bridge.overworld(self)
+            result["headline"] = _trial_headline(self.trial)
         self._emit(actor="system", action="finale", line=result["headline"], result=result)
         return result
 
@@ -526,6 +542,14 @@ class PepQuest:
         self.ledger.write(level=fields.pop("level", self.level), **fields)
         if self.pace:
             time.sleep(self.pace)
+
+
+def _trial_headline(t: dict) -> str:
+    who = t.get("name") or "The hero"
+    return {"VALIDATED DISCOVERY": f"Validated discovery: {who} survives the Trial of Truth and the hero crosses into the Overworld.",
+            "JUSTIFIED UNCERTAINTY": "Justified uncertainty: the hero crosses the bridge with a qualified, honest report.",
+            "UNJUSTIFIED CONFIDENCE": f"Unjustified confidence: {who} fails on the sealed vault and the bridge cracks.",
+            "INVALID METHODOLOGY": f"Invalid methodology: the final audit rejects {who} and the bridge collapses."}[t["outcome"]]
 
 
 ENEMY_ACTION = {"siren": ("DENOISE", "EXPLORATORY_CLAIM"), "bat": ("DENOISE", "EXPLORATORY_CLAIM"),

@@ -159,3 +159,33 @@ def test_run_paths_stay_in_the_runs_folder_and_pace_is_bounded(client, tmp_path)
     assert client.get("/api/runs/..%2Fsecret/events").status_code == 404
     assert client.post("/api/runs", json={"pace": -1}).status_code == 422
     assert client.post("/api/runs", json={"pace": 1e9}).status_code == 422
+
+
+def test_the_directors_console_over_http(quest_client):
+    c = quest_client
+    qid = c.post("/api/quests", json={"campaign": "A", "llm": False, "interactive": True}).json()["quest_id"]
+    time.sleep(1.5)
+    out = c.post(f"/api/quests/{qid}/chat", json={"mode": "CHALLENGE", "text": "Could this be luck?", "target": "pioneer",
+                                                  "request_id": "x1"})
+    assert out.status_code == 200, out.text
+    mid = out.json()["mystery"]["id"]
+    fight = c.post(f"/api/quests/{qid}/mystery/{mid}", json={"action": "summon", "request_id": "x2"})
+    assert fight.status_code == 200, fight.text
+    assert fight.json()["mystery"]["status"] in ("survived", "fallen")
+    again = c.post(f"/api/quests/{qid}/mystery/{mid}", json={"action": "summon", "request_id": "x3"})
+    assert again.status_code == 409
+    assert c.post(f"/api/quests/{qid}/bridge", json={"choice": "cross"}).status_code == 409   # not at the bridge yet
+    for lv in (1, 2, 3, 4):
+        c.post(f"/api/quests/{qid}/advance", json={"level": lv})
+    for _ in range(200):
+        if c.get(f"/api/quests/{qid}/director").json()["waiting"] == "bridge":
+            break
+        time.sleep(0.1)
+    assert c.post(f"/api/quests/{qid}/bridge", json={"choice": "inconclusive", "request_id": "b1"}).status_code == 200
+    events = wait_for_quest(c, qid)
+    assert events[-1]["action"] == "finale" and events[-1]["result"]["overworld"]["trial"]["outcome"] == "JUSTIFIED UNCERTAINTY"
+
+
+def test_a_recording_has_no_console(quest_client):
+    qid = quest_client.post("/api/quests", json={"campaign": "A", "llm": False}).json()["quest_id"]
+    assert quest_client.post(f"/api/quests/{qid}/chat", json={"mode": "ASK", "text": "hi"}).status_code == 409

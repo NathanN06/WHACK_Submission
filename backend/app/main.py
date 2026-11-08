@@ -20,6 +20,7 @@ from .arena.orchestrator import Arena
 from .pep import rules as pep_rules
 from .pep.agents import make_hero
 from .pep.campaign import PepQuest
+from .pep.hypotheses import DB_PATH as EVIDENCE_DB, MAX_SCROLLS
 from .pep.campaigns import ARCHETYPES, BY_LETTER, CAMPAIGNS, HERO
 from .pep.director import DirectorError, Expedition
 from .pep.models import QuestEvent
@@ -163,6 +164,7 @@ class QuestRequest(BaseModel):
     pace: float = Field(0.0, ge=0, le=5)
     seed: int = 0
     interactive: bool = False  # True: the quest waits for the screen and the Research Director's console is open
+    scrolls: int | None = Field(None, ge=1, le=MAX_SCROLLS)  # None: the three hand-written scrolls; else the Scribe forms this many
 
 
 def _replay_quest(ledger: Ledger, source: Path, pace: float) -> None:
@@ -191,7 +193,14 @@ def start_quest(req: QuestRequest):
     else:
         cid = _campaign_id(req.campaign)
         ledger = Ledger(quest_id, QUESTS, model=QuestEvent)
-        quest = PepQuest(quest_id, cid, ledger, make_hero(_use_llm(req.llm)), seed=req.seed, pace=req.pace)
+        use_llm = _use_llm(req.llm)
+        scribe = None
+        if use_llm and req.scrolls is not None:
+            from .arena.agents import ENV_FILE, anthropic_complete, load_env_key
+            load_env_key(ENV_FILE)
+            scribe = anthropic_complete()
+        quest = PepQuest(quest_id, cid, ledger, make_hero(use_llm), seed=req.seed, pace=req.pace,
+                         n_scrolls=req.scrolls, scribe=scribe)
         if req.interactive:
             Expedition(quest)
         thread = threading.Thread(target=quest.run, daemon=True)
@@ -320,7 +329,7 @@ def campaigns():
     """The four peptide campaigns the title screen offers."""
     return [{"id": c.id, "letter": c.letter, "title": c.title, "question": c.question, "drug": c.drug,
              "comparator": c.comparator, "target": c.outcomes[0].label, "scrolls": [s.title for s in c.scrolls],
-             "simulated": True} for c in CAMPAIGNS.values()]
+             "simulated": True, "max_scrolls": MAX_SCROLLS, "real_evidence": EVIDENCE_DB.exists()} for c in CAMPAIGNS.values()]
 
 
 @app.get("/api/quests-rules")

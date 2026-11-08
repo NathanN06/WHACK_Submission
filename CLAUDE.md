@@ -8,6 +8,7 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 - `docs/` — notes and pitch material
 - `scripts/download_data.py` — downloads datasets into `data/` (gitignored; never commit data)
 - `scripts/build_db.py` — loads the CSVs into `data/whack.duckdb` (run with `.venv/bin/python`)
+- `scripts/download_pep_evidence.py` — fetches REAL Europe PMC papers, ClinicalTrials.gov studies and openFDA FAERS counts for the Gauntlet campaigns into `data/pep_evidence.duckdb` (separate file because `build_db.py` rebuilds `whack.duckdb`)
 
 ## Data conventions
 - `participant_id` = a person (`CGM-001`, `BUT-101`); `session_id` = one measurement period. Train/holdout splits must be by `participant_id`.
@@ -29,6 +30,7 @@ Hackathon project (WHACK): an AI researcher that proposes hypotheses from data a
 
 ## The Gauntlet (Peptide & GLP-1 Edition): rules for editing backend/app/pep
 - The hero (agents.py) only chooses abilities for each scroll. Only judge.py measures; only campaign.py applies the damage rules in rules.py; report.py only copies measured numbers.
-- Every campaign is a simulated world (world.py) with planted truths: never present its results as real findings or medical advice.
+- The Scribe (hypotheses.py) only writes the words of 1-6 scrolls (title, claim, origin, outcome, topic, archetype) when a quest asks for `scrolls: N`; it never writes numbers. Each scroll's papers and completed-RCT count are copied from the REAL `data/pep_evidence.duckdb`; without `scrolls`, the three hand-written scrolls are used.
+- The patient cohort and social corpus are still a simulated world (world.py) with planted truths: never present results as real findings or medical advice.
 - The "vault2" split (index day >= 1450) is reserved for a future Evolution Trial: never read it in levels I to IV.
 - After changing the engine, re-record the demos: .venv/bin/python scripts/run_pep.py all --out frontend/src/demo --quiet

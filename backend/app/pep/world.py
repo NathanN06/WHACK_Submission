@@ -51,6 +51,7 @@ class Literature:
     rodent: int = 0
     in_vitro: int = 0
     labs: tuple = (1.0,)                        # share of papers from each lab
+    records: list | None = None                 # REAL papers (hypotheses.py): species and lab of each, used as they are
 
 
 @dataclass
@@ -69,6 +70,8 @@ class Scroll:
     n_rct: int = 0
     plan: dict = field(default_factory=dict)
     origin: str = ""        # where the scroll was found
+    evidence_topic: str = ""    # the real evidence topic its papers and trials come from (hypotheses.py)
+    evidence_real: bool = False
 
 
 @dataclass
@@ -213,6 +216,8 @@ class World:
         if s.literature is None:
             return []
         L = s.literature
+        if L.records is not None:
+            return [{"species": r["species"], "lab": r["lab"]} for r in L.records]
         rng = np.random.default_rng(57 + self.seed + hash_key(s.key))
         species = ["human"] * L.human + ["rodent"] * L.rodent + ["in vitro"] * L.in_vitro
         labs = rng.choice(len(L.labs), len(species), p=np.asarray(L.labs) / sum(L.labs))

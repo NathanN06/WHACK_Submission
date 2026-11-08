@@ -85,6 +85,8 @@ code, pre { font: 13px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .menu-row { display: flex; align-items: center; justify-content: center; gap: 16px; flex-wrap: wrap; margin-top: 14px; }
 .menu-buttons { display: flex; gap: 14px; justify-content: center; flex-wrap: wrap; }
 .llm-toggle { display: flex; gap: 8px; align-items: center; }
+.scroll-count { display: flex; gap: 8px; align-items: center; }
+.scroll-count select { font: inherit; color: var(--bone); background: var(--charcoal); border: 0; padding: 4px 6px; box-shadow: inset 0 0 0 2px var(--purple); }
 .who { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
 
 /* ---------- split-brain game layout ---------- */
@@ -142,6 +144,8 @@ code, pre { font: 13px/1.45 ui-monospace, "SFMono-Regular", Menlo, monospace; }
 .pcard { display: flex; gap: 8px; padding: 8px; background: var(--ink); box-shadow: inset 0 0 0 2px var(--purple); min-width: 0; }
 .pcard img { image-rendering: pixelated; flex: none; background: var(--charcoal); }
 .pcard.fallen { opacity: .5; filter: grayscale(1); }
+.pcard .claim { margin: 3px 0 4px; font-size: 12px; line-height: 1.3; color: var(--bone); display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
 .pcard.hero-card { box-shadow: inset 0 0 0 2px #2b6f78; }
 .pcard.a-HYPE { box-shadow: inset 3px 0 0 #ff4ad8, inset 0 0 0 2px var(--purple); }
 .pcard.a-PIONEER { box-shadow: inset 3px 0 0 #1fbfbf, inset 0 0 0 2px var(--purple); }
@@ -236,6 +240,14 @@ details pre { max-height: 240px; overflow: auto; background: var(--navy); paddin
 /* ---------- dialogs ---------- */
 dialog { border: 0; color: var(--bone); padding: 18px 22px; max-width: min(900px, calc(100vw - 32px)); max-height: calc(100vh - 40px); overflow: auto; --edge: var(--gold); }
 dialog::backdrop { background: rgba(5, 4, 12, .72); }
+.pcard:not(.hero-card) { cursor: pointer; }
+.pcard:not(.hero-card):hover, .pcard:not(.hero-card):focus-visible { box-shadow: inset 0 0 0 2px var(--gold); outline: none; }
+.scroll-dlg { width: min(640px, calc(100vw - 32px)); }
+.scroll-dlg h3 { margin-top: 0; }
+.scroll-dlg .hyp { margin: 8px 0 14px; padding: 10px 14px; font-size: 17px; line-height: 1.4; background: var(--charcoal); border-left: 4px solid var(--gold); }
+.scroll-dlg .papers, .scroll-dlg .lines { margin: 6px 0 10px; padding-left: 18px; font-size: 13px; line-height: 1.4; }
+.scroll-dlg a { color: var(--gold); }
+.scroll-dlg .muted { color: var(--muted); font-size: 13px; }
 dialog h2 { font-size: clamp(34px, 5vw, 56px); line-height: .9; color: var(--gold); text-align: center; text-shadow: 3px 3px 0 var(--purple); }
 dialog h3 { font-size: 26px; color: var(--gold); margin: 12px 0 6px; }
 dialog .sub { text-align: center; color: var(--muted); margin: 6px 0 10px; }

@@ -24,7 +24,7 @@ body {
 h1, h2, h3 { font-family: "Jersey 10", "Pixelify Sans", sans-serif; font-weight: 400; margin: 0; letter-spacing: .5px; }
 button, input { font: inherit; color: inherit; }
 [hidden] { display: none !important; }
-.pixel { image-rendering: pixelated; image-rendering: crisp-edges; display: block; }
+.pixel { image-rendering: pixelated; display: block; }
 
 /* notched pixel frame: hard shadows leave the corners cut out */
 .frame {

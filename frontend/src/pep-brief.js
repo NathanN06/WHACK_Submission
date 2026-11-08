@@ -13,7 +13,7 @@ function showRoom() {
 
 let roomFrame = 0;
 function roomLoop() {
-  const ctx = $("room-canvas").getContext("2d");
+  const ctx = crispContext($("room-canvas"));
   const tick = () => {
     if (!$("screen-room").hidden && G.state.finale) drawLab(ctx, G.reduced ? 0 : roomFrame++, G.state);
     requestAnimationFrame(tick);

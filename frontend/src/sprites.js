@@ -1,5 +1,5 @@
 // Original pixel-art sprites for the Hypothesis Gauntlet. 1 sprite pixel = 1 game pixel;
-// the 320x180 game canvas is scaled up with nearest-neighbour (image-rendering: pixelated).
+// the 320x180 game canvas is drawn at PIXEL_SCALE device pixels per game pixel (crispContext).
 //
 // Small sprites are character maps: each letter is a palette colour, "." is transparent.
 // Symmetric ones are written as their left half and mirrored. Bosses are drawn in code.
@@ -159,14 +159,22 @@ const ENEMY_ART = {
 
 const _cache = new Map();
 
+// Bakes a character map into a canvas with a one-pixel dark outline, so sprites read clearly
+// against any background. The canvas is two pixels wider and taller than the map.
+const OUTLINE = "#0d0b1e";
 function bake(key, map, pal) {
   if (_cache.has(key)) return _cache.get(key);
   const h = map.length, w = map[0].length;
   const c = document.createElement("canvas");
-  c.width = w; c.height = h;
+  c.width = w + 2; c.height = h + 2;
   const ctx = c.getContext("2d");
+  const solid = (x, y) => y >= 0 && y < h && x >= 0 && x < w && map[y][x] !== "." && !!pal[map[y][x]];
+  ctx.fillStyle = OUTLINE;
+  for (let y = -1; y <= h; y++) for (let x = -1; x <= w; x++) {
+    if (!solid(x, y) && (solid(x - 1, y) || solid(x + 1, y) || solid(x, y - 1) || solid(x, y + 1))) ctx.fillRect(x + 1, y + 1, 1, 1);
+  }
   map.forEach((row, y) => [...row].forEach((ch, x) => {
-    if (ch !== "." && pal[ch]) { ctx.fillStyle = pal[ch]; ctx.fillRect(x, y, 1, 1); }
+    if (solid(x, y)) { ctx.fillStyle = pal[ch]; ctx.fillRect(x + 1, y + 1, 1, 1); }
   }));
   _cache.set(key, c);
   return c;
@@ -266,6 +274,18 @@ function pixelText(ctx, text, x, y, color, shadow = COLORS.navy) {
     }
     cx += 4;
   }
+}
+
+// ---------- crisp canvases ----------
+// Each stage canvas keeps 320x180 game units but is backed by 6 device pixels per game pixel, with
+// smoothing off, so sprites drawn at 2x or 3x stay hard-edged instead of being blurred by the browser.
+const PIXEL_SCALE = 6;
+function crispContext(canvas) {
+  if (canvas.width !== 320 * PIXEL_SCALE) { canvas.width = 320 * PIXEL_SCALE; canvas.height = 180 * PIXEL_SCALE; }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(PIXEL_SCALE, 0, 0, PIXEL_SCALE, 0, 0);
+  ctx.imageSmoothingEnabled = false;
+  return ctx;
 }
 
 // ---------- primitives shared with the bosses and worlds ----------
@@ -404,6 +424,28 @@ const BOSSES = { chimera: drawChimera, chimera_overfit: drawChimera, chimera_sel
                  reaper: drawReaper, titan: drawTitan, guardian: drawGuardian };
 // The Knight and the Sentinel are bosses' lieutenants: drawn from maps, at double weight.
 
+// Bosses are drawn in code; on the stage they go through an offscreen canvas so they get the same dark
+// one-pixel outline as the baked sprites. Feet at (x, y) in the target's units, drawn at an integer scale.
+const _bossBuf = {};
+function drawBossOutlined(ctx, kind, x, y, f, scale) {
+  const W = 96, H = 72;
+  if (!_bossBuf.c) {
+    for (const k of ["c", "s"]) { _bossBuf[k] = document.createElement("canvas"); _bossBuf[k].width = W; _bossBuf[k].height = H; }
+  }
+  const b = _bossBuf.c.getContext("2d"), sh = _bossBuf.s.getContext("2d");
+  b.clearRect(0, 0, W, H);
+  BOSSES[kind](b, W / 2, H - 2, f, false);
+  sh.globalCompositeOperation = "source-over"; sh.clearRect(0, 0, W, H); sh.drawImage(_bossBuf.c, 0, 0);
+  sh.globalCompositeOperation = "source-in"; sh.fillStyle = OUTLINE; sh.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.imageSmoothingEnabled = false;
+  ctx.translate(Math.round(x - W / 2 * scale), Math.round(y - (H - 2) * scale));
+  ctx.scale(scale, scale);
+  for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) ctx.drawImage(_bossBuf.s, dx, dy);
+  ctx.drawImage(_bossBuf.c, 0, 0);
+  ctx.restore();
+}
+
 function drawEnemy(ctx, kind, x, y, f, head, opts = {}) {
   if (BOSSES[kind]) {
     ctx.save();
@@ -418,7 +460,7 @@ function drawEnemy(ctx, kind, x, y, f, head, opts = {}) {
   const squash = kind === "slime" && f % 30 < 15;
   if (opts.flash) blit(ctx, flashOf(`enemy:${kind}`, img), x, y + bob, opts);
   else if (squash) { ctx.save(); if (opts.alpha != null) ctx.globalAlpha = opts.alpha;
-    ctx.drawImage(img, Math.round(x - 9), Math.round(y - 15 + bob), 18, 15); ctx.restore(); }
+    ctx.drawImage(img, Math.round(x - img.width / 2), Math.round(y - img.height + 3 + bob), img.width, img.height - 3); ctx.restore(); }
   else blit(ctx, img, x, y + bob, opts);
   return 16;
 }

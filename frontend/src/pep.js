@@ -62,7 +62,7 @@ function renderCards() {
 }
 
 function titleLoop() {
-  const ctx = $("title-canvas").getContext("2d");
+  const ctx = crispContext($("title-canvas"));
   const tick = () => {
     if (!$("screen-title").hidden) { drawTitleScene(ctx, G.f++); }
     requestAnimationFrame(tick);
@@ -209,10 +209,10 @@ function skipLevel() {
 
 // ---------- the battle stage ----------
 
-const HOME = [[44, 122], [72, 106], [100, 122]];  // where each scroll floats beside the Alchemist (feet, 2x)
+const HOME = [[36, 100], [70, 84], [104, 100]];  // where each scroll floats above the Alchemist (feet, 2x)
 const HERO = [70, 168];
 const FRONT = [170, 138];   // the scroll under test floats out to face the enemy
-const GATE = [298, 166];    // the Gatekeeper watches from the far side
+const GATE = [302, 166];    // the Gatekeeper watches from the far side
 let STAGE = null;
 
 function scrollAt(s, id) {
@@ -221,7 +221,7 @@ function scrollAt(s, id) {
 }
 
 function stageLoop() {
-  const ctx = $("stage").getContext("2d");
+  const ctx = crispContext($("stage"));
   STAGE = ctx;
   const frame = (now) => {
     if (!$("screen-game").hidden) {
@@ -257,23 +257,21 @@ function drawStage(ctx, now) {
   }
   // the enemy
   if (s.enemy && s.enemy.key) {
-    aura(ctx, 256, 140, 60, "255,230,180", 0.28);  // a pool of light so dark foes read
+    aura(ctx, 252, 132, 70, "255,230,180", 0.34);  // a pool of light so dark foes read
     const L = G.lunge && now - G.lunge.t0 < 500 ? G.lunge : null;
     const ex = 252 - (L && L.hit && !G.reduced ? Math.sin((now - L.t0) / 500 * Math.PI) * 30 : 0);
-    ctx.save(); ctx.translate(Math.round(ex), 162);
-    ctx.scale(BOSSES[s.enemy.key] ? 1.6 : 3, BOSSES[s.enemy.key] ? 1.6 : 3);
-    drawEnemy(ctx, s.enemy.key, 0, 0, f, false);
-    ctx.restore();
+    if (BOSSES[s.enemy.key]) drawBossOutlined(ctx, s.enemy.key, Math.round(ex), 162, f, 2);
+    else { ctx.save(); ctx.translate(Math.round(ex), 162); ctx.scale(3, 3); drawEnemy(ctx, s.enemy.key, 0, 0, f, false); ctx.restore(); }
   }
   // the Alchemist
   const hero = pepSprite("Alchemist");
   const hb = G.reduced ? 0 : Math.round(Math.sin(G.f / 16) * 0.6);
-  ctx.save(); ctx.translate(HERO[0], HERO[1] + hb); ctx.scale(2, 2); blit(ctx, hero, 0, 0); ctx.restore();
+  ctx.save(); ctx.translate(HERO[0], HERO[1] + hb); ctx.scale(3, 3); blit(ctx, hero, 0, 0); ctx.restore();
   // a thread of light from the flask to the scroll under test
   const fid = s.fighter && s.enemy && s.agents[s.fighter] && s.agents[s.fighter].status === "active" ? s.fighter : null;
   if (fid) for (let k = 1; k < 12; k++) {
     if ((k + Math.floor(f / 4)) % 3) continue;
-    const t = k / 12, x = HERO[0] + 26 + (FRONT[0] - HERO[0] - 26) * t, y = HERO[1] - 14 + (FRONT[1] - 12 - HERO[1] + 14) * t;
+    const t = k / 12, x = HERO[0] + 16 + (FRONT[0] - HERO[0] - 16) * t, y = HERO[1] - 22 + (FRONT[1] - 12 - HERO[1] + 22) * t;
     rect(ctx, x, y, 1, 1, "#7fe0ff");
   }
   // the three scrolls
@@ -342,10 +340,10 @@ const portraitCache = {};
 function portrait(key) {  // "hero", "gatekeeper", or a scroll archetype
   if (portraitCache[key]) return portraitCache[key];
   const img = key === "hero" ? pepSprite("Alchemist") : key === "gatekeeper" ? pepSprite("Gatekeeper") : scrollSprite(key);
-  const k = img.width > 8 ? 2.5 : 3.4, c = document.createElement("canvas");
+  const big = img.width > 12, k = big ? 2 : 3, c = document.createElement("canvas");
   c.width = 48; c.height = 48;
   const ctx = c.getContext("2d"); ctx.imageSmoothingEnabled = false;
-  ctx.drawImage(img, (48 - img.width * k) / 2, img.width > 8 ? 48 - img.height * k : (48 - img.height * k) / 2, img.width * k, img.height * k);
+  ctx.drawImage(img, Math.round((48 - img.width * k) / 2), big ? 48 - img.height * k : Math.round((48 - img.height * k) / 2), img.width * k, img.height * k);
   return (portraitCache[key] = c.toDataURL());
 }
 
